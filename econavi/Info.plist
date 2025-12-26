@@ -2,6 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>econavi needs your location to provide route suggestions and track your commute.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>needs your location to provide real-time route tracking and safety features.
+econavi needs your location to provide real-time route tracking and safety features.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>EmissioNavi needs your location for background tracking of your commute.
+EmissioNavi needs your location for background tracking of your commute.
+EmissioNavi needs your location for background tracking of your commute.
+EmissioNavi needs your location for background tracking of your commute.
+</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
