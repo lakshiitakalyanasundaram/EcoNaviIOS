@@ -229,15 +229,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-## 👤 Author
-
-**Lakshii Takalyanasundaram**
-
-- GitHub: [@lakshiitakalyanasundaram](https://github.com/lakshiitakalyanasundaram)
-- Repository: [EcoNaviIOS](https://github.com/lakshiitakalyanasundaram/EcoNaviIOS)
-
----
-
 ## 🙏 Acknowledgments
 
 - Apple for providing excellent frameworks (SwiftUI, MapKit, Core Location)
