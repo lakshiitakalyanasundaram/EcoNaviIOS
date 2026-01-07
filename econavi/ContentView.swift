@@ -7,6 +7,9 @@ struct ContentView: View {
 
     @StateObject private var locationManager = LocationManager()
     @StateObject private var searchService = SearchService()
+    @StateObject private var safetyManager = SafetyManager()
+    @StateObject private var routeService = RouteService() // Shared route service
+    @StateObject private var navigationManager = NavigationManager() // Shared navigation manager
 
     @State private var origin = "Current Location"
     @State private var destination = ""
@@ -16,6 +19,7 @@ struct ContentView: View {
     @State private var showSheet = false
     @State private var showSuggestions = false
     @State private var isInteractingWithSheet = false
+    @State private var showSafetyView = false
 
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 12.9716, longitude: 77.5946),
@@ -25,17 +29,42 @@ struct ContentView: View {
     var body: some View {
         ZStack {
 
-            // MARK: MAP
-            MapView(
-                region: $region,
-                origin: origin,
-                destination: destination,
-                selectedMode: selectedMode,
-                showRoutes: showRoutes,
-                userLocation: locationManager.location,
-                isTracking: locationManager.isTracking
+            // MARK: COLOR-CODED MAP
+            ColorCodedMapView(
+                locationManager: locationManager,
+                routeService: routeService,
+                navigationManager: navigationManager
             )
             .ignoresSafeArea()
+
+            // MARK: NAVIGATION OVERLAY (At the bottom)
+            if navigationManager.isNavigating {
+                VStack {
+                    Spacer()
+                    NavigationOverlay(
+                        navigationManager: navigationManager,
+                        routeService: routeService,
+                        locationManager: locationManager,
+                        onStop: {
+                            // Stop navigation
+                            navigationManager.stopNavigation()
+                            locationManager.stopTracking()
+                            
+                            // Clear routes
+                            routeService.clearRoute()
+                            
+                            // Recenter to current location
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                // Get fresh location and trigger recenter
+                                locationManager.getCurrentLocation()
+                                NotificationCenter.default.post(name: .recenterToCurrentLocation, object: nil)
+                            }
+                        }
+                    )
+                }
+                .ignoresSafeArea(edges: .bottom)
+                .zIndex(100) // Ensure it's above everything
+            }
 
             // MARK: TOP SEARCH BAR + SUGGESTIONS
             VStack(alignment: .leading, spacing: 12) {
@@ -90,7 +119,9 @@ struct ContentView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
                     .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 2)
 
-                    Button {} label: {
+                    Button {
+                        showSafetyView = true
+                    } label: {
                         Image(systemName: "shield.fill")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(.red)
@@ -185,6 +216,18 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
 
+        // MARK: SAFETY VIEW
+        .sheet(isPresented: $showSafetyView) {
+            SafetyView(
+                safetyManager: safetyManager,
+                locationManager: locationManager,
+                isPresented: $showSafetyView
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
+        }
+        
         // MARK: BOTTOM SHEET
         .sheet(isPresented: $showSheet) {
             SidebarView(
@@ -194,6 +237,7 @@ struct ContentView: View {
                 selectedMode: $selectedMode,
                 optimizationPrefs: $optimizationPrefs,
                 locationManager: locationManager,
+                routeService: routeService,
                 onClose: { 
                     showSheet = false
                     isInteractingWithSheet = false
@@ -235,6 +279,7 @@ struct SidebarView: View {
     @Binding var selectedMode: String?
     @Binding var optimizationPrefs: RoutePreferences
     @ObservedObject var locationManager: LocationManager
+    @ObservedObject var routeService: RouteService
     var onClose: (() -> Void)?
 
     @State private var selectedTab: SidebarTab = .navigate
@@ -267,7 +312,8 @@ struct SidebarView: View {
                         showRoutes: $showRoutes,
                         selectedMode: $selectedMode,
                         optimizationPrefs: $optimizationPrefs,
-                        locationManager: locationManager
+                        locationManager: locationManager,
+                        routeService: routeService
                     )
                     .tag(SidebarTab.navigate)
 

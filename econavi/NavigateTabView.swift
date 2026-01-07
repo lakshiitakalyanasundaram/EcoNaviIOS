@@ -9,6 +9,7 @@ struct NavigateTabView: View {
     @Binding var selectedMode: String?
     @Binding var optimizationPrefs: RoutePreferences
     @ObservedObject var locationManager: LocationManager
+    @ObservedObject var routeService: RouteService
     
     @State private var prioritiesSet = false
     @State private var showCompareRoutes = false
@@ -27,7 +28,10 @@ struct NavigateTabView: View {
                         if showCompareRoutes {
                             CompareRoutesCard(
                                 selectedMode: $selectedMode,
-                                optimizationPrefs: optimizationPrefs
+                                optimizationPrefs: optimizationPrefs,
+                                locationManager: locationManager,
+                                routeService: routeService,
+                                destination: destination
                             )
                         }
                     }
@@ -268,6 +272,9 @@ struct RouteOptimizerCard: View {
 struct CompareRoutesCard: View {
     @Binding var selectedMode: String?
     let optimizationPrefs: RoutePreferences
+    @ObservedObject var locationManager: LocationManager
+    @ObservedObject var routeService: RouteService
+    let destination: String
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -279,9 +286,10 @@ struct CompareRoutesCard: View {
                 .foregroundStyle(.secondary)
             
             HStack(spacing: 12) {
-                routeOption("Walk", "figure.walk", "walk")
-                routeOption("Bike", "bicycle", "bike")
-                routeOption("Car", "car.fill", "car")
+                routeOption("Walk", "figure.walk", "walk", .walking)
+                routeOption("Bike", "bicycle", "bike", .walking)
+                routeOption("Car", "car.fill", "car", .automobile)
+                routeOption("Transit", "bus.fill", "transit", .transit)
             }
             
             if let selected = selectedMode {
@@ -290,16 +298,48 @@ struct CompareRoutesCard: View {
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
             }
+            
+            if routeService.isCalculating {
+                HStack {
+                    ProgressView()
+                    Text("Calculating route...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 8)
+            }
+            
+            if let route = routeService.route {
+                Divider()
+                    .padding(.vertical, 8)
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "clock.fill")
+                            .foregroundStyle(.blue)
+                        Text("\(Int(route.expectedTravelTime / 60)) min")
+                            .font(.subheadline.bold())
+                    }
+                    
+                    HStack {
+                        Image(systemName: "ruler.fill")
+                            .foregroundStyle(.green)
+                        Text(String(format: "%.1f km", route.distance / 1000))
+                            .font(.subheadline.bold())
+                    }
+                }
+            }
         }
         .padding()
         .background(.thinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
     
-    private func routeOption(_ title: String, _ icon: String, _ value: String) -> some View {
+    private func routeOption(_ title: String, _ icon: String, _ value: String, _ transportType: MKDirectionsTransportType) -> some View {
         Button {
             withAnimation(.spring(response: 0.2)) {
                 selectedMode = value
+                calculateRoute(transportType: transportType)
             }
         } label: {
             VStack(spacing: 8) {
@@ -318,6 +358,30 @@ struct CompareRoutesCard: View {
             )
         }
         .buttonStyle(.plain)
+    }
+    
+    private func calculateRoute(transportType: MKDirectionsTransportType) {
+        guard let userLocation = locationManager.location else {
+            locationManager.getCurrentLocation()
+            return
+        }
+        
+        // Geocode destination
+        let geocoder = CLGeocoder()
+        geocoder.geocodeAddressString(destination) { placemarks, error in
+            guard let placemark = placemarks?.first,
+                  let destinationCoordinate = placemark.location?.coordinate else {
+                return
+            }
+            
+            DispatchQueue.main.async {
+                routeService.calculateRoute(
+                    from: userLocation.coordinate,
+                    to: destinationCoordinate,
+                    transportType: transportType
+                )
+            }
+        }
     }
 }
 
