@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var showSuggestions = false
     @State private var isInteractingWithSheet = false
     @State private var showSafetyView = false
+    @State private var showProfileView = false
 
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 12.9716, longitude: 77.5946),
@@ -120,11 +121,11 @@ struct ContentView: View {
                     .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 2)
 
                     Button {
-                        showSafetyView = true
+                        showProfileView = true
                     } label: {
-                        Image(systemName: "shield.fill")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(.red)
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(.primary)
                             .frame(width: 44, height: 44)
                             .background(.regularMaterial, in: Circle())
                             .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
@@ -214,6 +215,30 @@ struct ContentView: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            
+            // MARK: SOS BUTTON AT BOTTOM
+            // Only show SOS button when not navigating (navigation overlay has its own controls)
+            if !navigationManager.isNavigating {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button {
+                            showSafetyView = true
+                        } label: {
+                            Image(systemName: "shield.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 60, height: 60)
+                                .background(.red, in: Circle())
+                                .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                        }
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 90) // Slightly higher than recenter button
+                    }
+                }
+                .zIndex(50) // Below navigation overlay but above map
+            }
         }
 
         // MARK: SAFETY VIEW
@@ -226,6 +251,11 @@ struct ContentView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(28)
+        }
+        
+        // MARK: PROFILE VIEW (FULL SCREEN)
+        .fullScreenCover(isPresented: $showProfileView) {
+            ProfileView(isPresented: $showProfileView)
         }
         
         // MARK: BOTTOM SHEET
