@@ -64,26 +64,6 @@ struct ColorCodedMapView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // RECENTER BUTTON
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    Button {
-                        recenterTrigger = UUID()
-                    } label: {
-                        Image(systemName: "location.fill")
-                            .foregroundColor(.white)
-                            .frame(width: 50, height: 50)
-                            .background(Color.blue)
-                            .clipShape(Circle())
-                            .shadow(radius: 8)
-                    }
-                    .padding(.trailing, 16)
-                    .padding(.bottom, 100)
-                }
-            }
-
             // START LOCATION DIALOG
             if showStartLocationDialog, let place = selectedPlace {
                 StartLocationDialog(
