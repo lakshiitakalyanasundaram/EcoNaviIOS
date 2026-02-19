@@ -8,6 +8,7 @@ class LocationManager: NSObject, ObservableObject {
     @Published var location: CLLocation?
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var isTracking = false
+    @Published var heading: CLHeading?
     
     override init() {
         super.init()
@@ -34,6 +35,16 @@ class LocationManager: NSObject, ObservableObject {
         isTracking = false
     }
     
+    func startHeadingUpdates() {
+        guard CLLocationManager.headingAvailable() else { return }
+        locationManager.startUpdatingHeading()
+    }
+    
+    func stopHeadingUpdates() {
+        locationManager.stopUpdatingHeading()
+        heading = nil
+    }
+    
     func getCurrentLocation() {
         guard authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways else {
             requestPermission()
@@ -51,6 +62,10 @@ extension LocationManager: CLLocationManagerDelegate {
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("Location error: \(error.localizedDescription)")
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        heading = newHeading
     }
     
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {

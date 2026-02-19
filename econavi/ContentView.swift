@@ -22,6 +22,11 @@ struct ContentView: View {
     @State private var showSafetyView = false
     @State private var showProfileView = false
 
+    // Directions / navigation flow
+    @State private var activeDestinationName: String = ""
+    @State private var activeDestinationCoordinate: CLLocationCoordinate2D?
+    @State private var showDirectionsSheet = false
+
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 12.9716, longitude: 77.5946),
         span: MKCoordinateSpan(latitudeDelta: 0.15, longitudeDelta: 0.15)
@@ -34,37 +39,21 @@ struct ContentView: View {
             ColorCodedMapView(
                 locationManager: locationManager,
                 routeService: routeService,
-                navigationManager: navigationManager
+                navigationManager: navigationManager,
+                onDestinationSelected: { name, coordinate in
+                    presentDirections(name: name, coordinate: coordinate)
+                }
             )
             .ignoresSafeArea()
 
-            // MARK: NAVIGATION OVERLAY (At the bottom)
-            if navigationManager.isNavigating {
-                VStack {
-                    Spacer()
-                    NavigationOverlay(
-                        navigationManager: navigationManager,
-                        routeService: routeService,
-                        locationManager: locationManager,
-                        onStop: {
-                            // Stop navigation
-                            navigationManager.stopNavigation()
-                            locationManager.stopTracking()
-                            
-                            // Clear routes
-                            routeService.clearRoute()
-                            
-                            // Recenter to current location
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                // Get fresh location and trigger recenter
-                                locationManager.getCurrentLocation()
-                                NotificationCenter.default.post(name: .recenterToCurrentLocation, object: nil)
-                            }
-                        }
-                    )
-                }
-                .ignoresSafeArea(edges: .bottom)
-                .zIndex(100) // Ensure it's above everything
+            // MARK: NAVIGATION OVERLAY (Apple Maps style)
+            if navigationManager.navigationModeActive {
+                NavigationModeView(
+                    navigationManager: navigationManager,
+                    routeService: routeService,
+                    locationManager: locationManager
+                )
+                .zIndex(100)
             }
 
             // MARK: TOP SEARCH BAR + SUGGESTIONS
@@ -134,8 +123,8 @@ struct ContentView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
 
-                // Suggestions (only show when not interacting with sheet)
-                if showSuggestions && !searchService.results.isEmpty && !isInteractingWithSheet {
+                // Suggestions (hide when in navigation or interacting with sheet)
+                if showSuggestions && !searchService.results.isEmpty && !isInteractingWithSheet && !navigationManager.navigationModeActive {
                     ScrollView {
                         VStack(spacing: 0) {
                             ForEach(Array(searchService.results.enumerated()), id: \.element.id) { index, result in
@@ -143,11 +132,11 @@ struct ContentView: View {
                                     withAnimation(.spring(response: 0.3)) {
                                         destination = result.title
                                         showSuggestions = false
-                                        showRoutes = true
-                                        isInteractingWithSheet = true
+                                        isInteractingWithSheet = false
                                     }
                                     searchService.clear()
-                                    showSheet = true
+                                    presentDirections(name: result.title,
+                                                      coordinate: result.coordinate)
                                 } label: {
                                     HStack(spacing: 14) {
                                         // Icon with background
@@ -218,7 +207,7 @@ struct ContentView: View {
             
             // MARK: SOS BUTTON AT BOTTOM
             // Only show SOS button when not navigating (navigation overlay has its own controls)
-            if !navigationManager.isNavigating {
+            if !navigationManager.navigationModeActive {
                 VStack {
                     Spacer()
                     HStack {
@@ -258,7 +247,7 @@ struct ContentView: View {
             ProfileView(isPresented: $showProfileView)
         }
         
-        // MARK: BOTTOM SHEET
+        // MARK: BOTTOM SHEET (Sidebar)
         .sheet(isPresented: $showSheet) {
             SidebarView(
                 origin: $origin,
@@ -288,6 +277,22 @@ struct ContentView: View {
             }
         }
 
+        // MARK: DIRECTIONS SHEET (after destination selection)
+        .sheet(isPresented: $showDirectionsSheet) {
+            if let coord = activeDestinationCoordinate {
+                DirectionsSheetView(
+                    destinationName: activeDestinationName,
+                    destinationCoordinate: coord,
+                    locationManager: locationManager,
+                    navigationManager: navigationManager,
+                    routeService: routeService,
+                    isPresented: $showDirectionsSheet
+                )
+                .presentationDetents([.height(320), .large])
+                .presentationDragIndicator(.visible)
+            }
+        }
+
         .onAppear {
             locationManager.requestPermission()
             locationManager.getCurrentLocation()
@@ -299,6 +304,17 @@ struct ContentView: View {
                 searchService.updateUserLocation(loc)
             }
         }
+        .onChange(of: navigationManager.navigationModeActive) { active in
+            if active {
+                withAnimation(.easeOut(duration: 0.2)) { showSuggestions = false }
+            }
+        }
+    }
+
+    private func presentDirections(name: String, coordinate: CLLocationCoordinate2D) {
+        activeDestinationName = name
+        activeDestinationCoordinate = coordinate
+        showDirectionsSheet = true
     }
 }
 struct SidebarView: View {

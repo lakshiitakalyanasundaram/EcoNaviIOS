@@ -109,8 +109,8 @@ class AuthManager: ObservableObject {
                 
                 print("Session restored via setSession() – new expiresAt: \(expiresStr)")
                 updateSession(restoredSession)
-                saveSession(restoredSession)  // Save refreshed version
-                return  // Success
+                saveSession(restoredSession)
+                return
             } catch {
                 print("Restore via setSession failed: \(error.localizedDescription)")
                 // Fall through (e.g., refresh token invalid/expired)
@@ -130,7 +130,7 @@ class AuthManager: ObservableObject {
     }
     
     // MARK: - State Update
-    
+
     private func updateSession(_ session: Session?) {
         self.session = session
         self.user = session?.user
@@ -138,6 +138,9 @@ class AuthManager: ObservableObject {
         self.email = session?.user.email ?? ""
         self.displayName = name(from: session?.user.email ?? "")
         self.errorMessage = nil
+        if session != nil {
+            Task { await UserDataManager.shared.refreshAll() }
+        }
     }
     
     // MARK: - Auth Actions
@@ -187,3 +190,4 @@ class AuthManager: ObservableObject {
     }
 }
 
+//sc check

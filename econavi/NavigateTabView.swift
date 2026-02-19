@@ -9,44 +9,17 @@ struct NavigateTabView: View {
     @Binding var selectedMode: String?
     @Binding var optimizationPrefs: RoutePreferences
     @ObservedObject var locationManager: LocationManager
-    @ObservedObject var routeService: RouteService
-    
-    @State private var prioritiesSet = false
-    @State private var showCompareRoutes = false
+    @ObservedObject var routeService: RouteService
+   
     
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(spacing: 16) {
-                    if !destination.isEmpty {
-                        RouteOptimizerCard(
-                            preferences: $optimizationPrefs,
-                            prioritiesSet: $prioritiesSet,
-                            showCompareRoutes: $showCompareRoutes
-                        )
-                        
-                        if showCompareRoutes {
-                            CompareRoutesCard(
-                                selectedMode: $selectedMode,
-                                optimizationPrefs: optimizationPrefs,
-                                locationManager: locationManager,
-                                routeService: routeService,
-                                destination: destination
-                            )
-                        }
-                    }
-                    
                     EmissionTipsCard()
                         .frame(minHeight: geometry.size.height * 0.5)
                 }
                 .padding()
-            }
-        }
-        .onChange(of: destination) { _ in
-            // Reset when destination changes
-            if destination.isEmpty {
-                prioritiesSet = false
-                showCompareRoutes = false
             }
         }
     }
