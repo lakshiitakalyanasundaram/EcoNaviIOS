@@ -4,13 +4,19 @@ import MapKit
 
 @main
 struct GreenPathApp: App {
-    // Create the shared AuthManager and inject it into the environment
     @StateObject private var authManager = AuthManager.shared
-    
+    @StateObject private var userDataManager = UserDataManager.shared
+
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(authManager)  // This makes auth available everywhere
+                .environmentObject(authManager)
+                .environmentObject(userDataManager)
+                .task {
+                    if authManager.isLoggedIn {
+                        await userDataManager.refreshAll()
+                    }
+                }
         }
     }
 }

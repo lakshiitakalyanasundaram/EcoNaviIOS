@@ -6,14 +6,15 @@ import PhotosUI
 
 struct ProfileView: View {
     @Binding var isPresented: Bool
-    
-    @EnvironmentObject var authManager: AuthManager  // Real Supabase authentication
-    
+
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var userDataManager: UserDataManager
+
     @State private var showSignIn = false
-    
-    @State private var savedPlacesCount = 0
     @State private var currentPreference = "Driving"
-    
+
+    private var savedPlacesCount: Int { userDataManager.savedPlaces.count }
+
     var body: some View {
         NavigationStack {
             List {
@@ -26,26 +27,26 @@ struct ProfileView: View {
                 }
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
-                
+
                 Section {
-                    NavigationLink(destination: PlacesView(savedPlacesCount: $savedPlacesCount)) {
+                    NavigationLink(destination: PlacesView()) {
                         ProfileRow(icon: "square.stack.fill", iconColor: .purple, title: "Places") {
                             Text("\(savedPlacesCount)")
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    
+
                     NavigationLink(destination: ReportsView()) {
                         ProfileRow(icon: "exclamationmark.bubble.fill", iconColor: .red, title: "Reports")
                     }
-                    
+
                     NavigationLink(destination: OfflineMapsView()) {
                         ProfileRow(icon: "arrow.down.circle.fill", iconColor: .gray, title: "Offline Maps") {
                             Text("Download")
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    
+
                     NavigationLink(destination: PreferencesView(currentPreference: $currentPreference)) {
                         ProfileRow(icon: "slider.horizontal.3", iconColor: .gray, title: "Preferences") {
                             Text(currentPreference)
@@ -92,9 +93,14 @@ struct ProfileView: View {
             .fullScreenCover(isPresented: $showSignIn) {
                 SignInView(isPresented: $showSignIn)
             }
+            .task {
+                if authManager.isLoggedIn {
+                    await userDataManager.refreshAll()
+                }
+            }
         }
     }
-    
+
     private func initials(from name: String) -> String {
         let parts = name.split(separator: " ").compactMap { $0.first }.map(String.init)
         if parts.isEmpty { return "G" }
@@ -167,83 +173,9 @@ private struct ProfileRow<Trailing: View>: View {
     }
 }
 
-// MARK: - Offline Maps Flow (Exactly as in old version)
+// MARK: - Offline Maps Flow
 
-struct OfflineMapRecord: Identifiable, Codable, Hashable {
-    var id: UUID
-    var name: String
-    var downloadedMB: Double
-    var totalMB: Double
-    var lastUpdated: String
-    
-    init(id: UUID = UUID(), name: String, downloadedMB: Double, totalMB: Double, lastUpdated: String) {
-        self.id = id
-        self.name = name
-        self.downloadedMB = downloadedMB
-        self.totalMB = totalMB
-        self.lastUpdated = lastUpdated
-    }
-}
-
-@MainActor
-final class OfflineMapsStore: ObservableObject {
-    @Published var maps: [OfflineMapRecord] = []
-    
-    private let storageKey = "offlineMaps.records.v1"
-    
-    init() {
-        load()
-    }
-    
-    func addDownload(for placeName: String) {
-        let total = Double.random(in: 250...520).rounded(toPlaces: 1)
-        let record = OfflineMapRecord(
-            name: placeName,
-            downloadedMB: 0,
-            totalMB: total,
-            lastUpdated: "Downloading…"
-        )
-        maps.insert(record, at: 0)
-        save()
-        simulateDownload(for: record.id)
-    }
-    
-    private func simulateDownload(for id: UUID) {
-        guard let idx = maps.firstIndex(where: { $0.id == id }) else { return }
-        
-        let total = maps[idx].totalMB
-        let steps = Int.random(in: 18...28)
-        let increment = total / Double(steps)
-        
-        Task { [weak self] in
-            guard let self else { return }
-            for _ in 0..<steps {
-                try? await Task.sleep(nanoseconds: 250_000_000)
-                guard let i = self.maps.firstIndex(where: { $0.id == id }) else { return }
-                self.maps[i].downloadedMB = min(total, self.maps[i].downloadedMB + increment)
-                self.save()
-            }
-            guard let i = self.maps.firstIndex(where: { $0.id == id }) else { return }
-            self.maps[i].downloadedMB = total
-            self.maps[i].lastUpdated = "Just now"
-            self.save()
-        }
-    }
-    
-    private func load() {
-        guard let data = UserDefaults.standard.data(forKey: storageKey) else { return }
-        if let decoded = try? JSONDecoder().decode([OfflineMapRecord].self, from: data) {
-            maps = decoded
-        }
-    }
-    
-    private func save() {
-        guard let data = try? JSONEncoder().encode(maps) else { return }
-        UserDefaults.standard.set(data, forKey: storageKey)
-    }
-}
-
-extension Double {
+private extension Double {
     func rounded(toPlaces places: Int) -> Double {
         let p = pow(10.0, Double(places))
         return (self * p).rounded() / p
@@ -276,17 +208,17 @@ final class OfflineMapSearchService: NSObject, ObservableObject, MKLocalSearchCo
 }
 
 struct OfflineMapsView: View {
-    @StateObject private var store = OfflineMapsStore()
+    @EnvironmentObject var userDataManager: UserDataManager
     @State private var showDownloadNewMap = false
-    
+
     var body: some View {
         List {
             Section {
-                if store.maps.isEmpty {
+                if userDataManager.offlineMaps.isEmpty {
                     Text("No Offline Maps")
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(store.maps) { map in
+                    ForEach(userDataManager.offlineMaps) { map in
                         NavigationLink(destination: OfflineMapDetailView(map: map)) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(map.name)
@@ -299,7 +231,7 @@ struct OfflineMapsView: View {
                     }
                 }
             }
-            
+
             Section {
                 Button {
                     showDownloadNewMap = true
@@ -308,7 +240,7 @@ struct OfflineMapsView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
-            
+
             Section("Settings") {
                 NavigationLink(destination: OfflineMapsSettingsView()) {
                     HStack {
@@ -330,11 +262,28 @@ struct OfflineMapsView: View {
             DownloadNewMapView(
                 isPresented: $showDownloadNewMap,
                 onDownload: { placeName in
-                    store.addDownload(for: placeName)
+                    Task {
+                        await startOfflineMapDownload(placeName: placeName)
+                    }
                 }
             )
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .task {
+            await userDataManager.fetchOfflineMaps()
+        }
+    }
+
+    private func startOfflineMapDownload(placeName: String) async {
+        let totalMB = Double.random(in: 250...520).rounded(toPlaces: 1)
+        guard let map = await userDataManager.addOfflineMapAndReturn(name: placeName, totalMB: totalMB) else { return }
+        let steps = Int.random(in: 18...28)
+        let increment = totalMB / Double(steps)
+        for step in 1...steps {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            let downloaded = min(totalMB, increment * Double(step))
+            await userDataManager.updateOfflineMap(id: map.id, downloadedMB: downloaded, lastUpdated: step == steps ? "Just now" : "Downloading…")
         }
     }
 }
@@ -403,7 +352,8 @@ struct DownloadNewMapView: View {
 }
 
 struct OfflineMapDetailView: View {
-    let map: OfflineMapRecord
+    let map: OfflineMap
+    @EnvironmentObject var userDataManager: UserDataManager
     @State private var rename = false
     
     var body: some View {
@@ -456,7 +406,7 @@ struct OfflineMapDetailView: View {
             .padding(.horizontal)
             
             Button(role: .destructive) {
-                // demo
+                Task { await userDataManager.deleteOfflineMap(id: map.id) }
             } label: {
                 Text("Delete Map")
                     .frame(maxWidth: .infinity)
@@ -519,11 +469,13 @@ enum ReportIssueType: String, CaseIterable, Identifiable {
 }
 
 struct ReportsView: View {
+    @EnvironmentObject var userDataManager: UserDataManager
     @State private var showReportSheet = false
     @State private var selectedIssue: ReportIssueType?
-    
+
     var body: some View {
         ZStack(alignment: .bottom) {
+            if userDataManager.reports.isEmpty {
             VStack(spacing: 16) {
                 Spacer()
                 Text("No Reports")
@@ -535,7 +487,21 @@ struct ReportsView: View {
                 Spacer()
                 Spacer()
             }
-            
+            } else {
+                List {
+                    ForEach(userDataManager.reports) { report in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(report.issueType)
+                                .font(.headline)
+                            if let title = report.placeTitle { Text(title).font(.subheadline).foregroundStyle(.secondary) }
+                            Text(report.createdAt, style: .date)
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+
             Button {
                 showReportSheet = true
             } label: {
@@ -556,8 +522,12 @@ struct ReportsView: View {
         }
         .sheet(item: $selectedIssue) { issue in
             ReportFlowRootView(issue: issue)
+                .environmentObject(userDataManager)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+        }
+        .task {
+            await userDataManager.fetchReports()
         }
     }
 }
@@ -626,9 +596,9 @@ struct ReportFlowRootView: View {
             Group {
                 switch issue {
                 case .reportSomethingMissing:
-                    ReportSomethingMissingView(onDone: { dismiss() })
+                    ReportSomethingMissingView(issueType: issue.rawValue, onDone: { dismiss() })
                 case .reportStreetIssue:
-                    ReportStreetIssueView(onDone: { dismiss() })
+                    ReportStreetIssueView(issueType: issue.rawValue, onDone: { dismiss() })
                 case .reportPlaceIssue:
                     ChoosePlaceView(
                         title: "Choose a Place",
@@ -656,7 +626,7 @@ struct ReportFlowRootView: View {
             .navigationDestination(for: ReportFlowDestination.self) { destination in
                 switch destination {
                 case .placeIssueOptions(let placeTitle):
-                    PlaceIssueOptionsView(placeTitle: placeTitle, onDone: { dismiss() })
+                    PlaceIssueOptionsView(placeTitle: placeTitle, issueType: issue.rawValue, onDone: { dismiss() })
                 case .routeIssueChooseStep(let tripTitle):
                     RouteIssueChooseStepView(tripTitle: tripTitle, onDone: { dismiss() }, onBack: { _ = path.popLast() })
                 case .incidentDetail(let type):
@@ -849,7 +819,9 @@ struct ChoosePlaceView: View {
 
 struct PlaceIssueOptionsView: View {
     let placeTitle: String
+    let issueType: String
     let onDone: () -> Void
+    @EnvironmentObject var userDataManager: UserDataManager
 
     @State private var selected: ReportPlaceIssueOption?
 
@@ -873,7 +845,10 @@ struct PlaceIssueOptionsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    onDone()
+                    Task {
+                        await userDataManager.raiseReport(issueType: issueType, placeTitle: placeTitle, description: selected?.rawValue)
+                        onDone()
+                    }
                 } label: {
                     Image(systemName: "checkmark")
                         .font(.body.weight(.semibold))
@@ -885,7 +860,7 @@ struct PlaceIssueOptionsView: View {
         .alert("Thanks", isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) {
             Button("OK") { selected = nil }
         } message: {
-            Text("This is a demo UI. The selected issue would be submitted to Apple Maps in the real app.")
+            Text("Your report has been submitted.")
         }
     }
 }
@@ -953,6 +928,7 @@ struct RouteIssueChooseStepView: View {
     let tripTitle: String
     let onDone: () -> Void
     let onBack: () -> Void
+    @EnvironmentObject var userDataManager: UserDataManager
 
     private let steps: [(String, String, String)] = [
         ("From My Location", "Airport, Ahmedabad", "building.2.fill"),
@@ -1006,7 +982,10 @@ struct RouteIssueChooseStepView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    onDone()
+                    Task {
+                        await userDataManager.raiseReport(issueType: "Report Route Issue")
+                        onDone()
+                    }
                 } label: {
                     Image(systemName: "checkmark")
                         .font(.body.weight(.semibold))
@@ -1069,6 +1048,7 @@ struct IncidentDetailView: View {
     let type: IncidentType
     let onDone: () -> Void
     let onBack: () -> Void
+    @EnvironmentObject var userDataManager: UserDataManager
 
     @State private var optionalInfo = ""
     @State private var pickedItems: [PhotosPickerItem] = []
@@ -1157,7 +1137,10 @@ struct IncidentDetailView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    onDone()
+                    Task {
+                        await userDataManager.raiseReport(issueType: "Report an Incident", description: optionalInfo.isEmpty ? nil : optionalInfo)
+                        onDone()
+                    }
                 } label: {
                     Image(systemName: "checkmark")
                         .font(.body.weight(.semibold))
@@ -1183,8 +1166,10 @@ struct IncidentDetailView: View {
 // MARK: - Street Issue and Something Missing
 
 struct ReportSomethingMissingView: View {
+    let issueType: String
     let onDone: () -> Void
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var userDataManager: UserDataManager
 
     var body: some View {
         NavigationStack {
@@ -1212,7 +1197,12 @@ struct ReportSomethingMissingView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { onDone() } label: {
+                    Button {
+                        Task {
+                            await userDataManager.raiseReport(issueType: issueType)
+                            onDone()
+                        }
+                    } label: {
                         Image(systemName: "checkmark")
                             .font(.body.weight(.semibold))
                             .frame(width: 34, height: 34)
@@ -1225,8 +1215,10 @@ struct ReportSomethingMissingView: View {
 }
 
 struct ReportStreetIssueView: View {
+    let issueType: String
     let onDone: () -> Void
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var userDataManager: UserDataManager
 
     var body: some View {
         NavigationStack {
@@ -1254,7 +1246,12 @@ struct ReportStreetIssueView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { onDone() } label: {
+                    Button {
+                        Task {
+                            await userDataManager.raiseReport(issueType: issueType)
+                            onDone()
+                        }
+                    } label: {
                         Image(systemName: "checkmark")
                             .font(.body.weight(.semibold))
                             .frame(width: 34, height: 34)
@@ -1339,20 +1336,170 @@ struct PreferencesView: View {
     }
 }
 
-// MARK: - Places Flow (Exactly as in old version)
+// MARK: - Places Flow (Apple Maps style)
 
 struct PlacesView: View {
-    @Binding var savedPlacesCount: Int
-    
+    @EnvironmentObject var userDataManager: UserDataManager
+    @State private var showAddCollection = false
+    @State private var newCollectionName = ""
+
+    private var homeAndWork: [SavedPlace] {
+        userDataManager.savedPlaces.filter { $0.category == .home || $0.category == .work }
+    }
+    private var favorites: [SavedPlace] {
+        userDataManager.savedPlaces.filter { $0.category == .favorites }
+    }
+    private var wantToGo: [SavedPlace] {
+        userDataManager.savedPlaces.filter { $0.category == .wantToGo }
+    }
+    private var visited: [SavedPlace] {
+        userDataManager.savedPlaces.filter { $0.category == .visited }
+    }
+
     var body: some View {
         List {
-            Section {
-                Text("Saved places will appear here.")
-                    .foregroundStyle(.secondary)
+            if !homeAndWork.isEmpty {
+                Section("Home & Work") {
+                    ForEach(homeAndWork) { place in
+                        PlaceRowView(place: place, userDataManager: userDataManager)
+                    }
+                }
+            }
+            Section("Favorites") {
+                if favorites.isEmpty {
+                    Text("No favorites yet")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(favorites) { place in
+                        PlaceRowView(place: place, userDataManager: userDataManager)
+                    }
+                }
+            }
+            Section("Want to Go") {
+                if wantToGo.isEmpty {
+                    Text("No places yet")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(wantToGo) { place in
+                        PlaceRowView(place: place, userDataManager: userDataManager)
+                    }
+                }
+            }
+            Section("Visited") {
+                if visited.isEmpty {
+                    Text("No visited places yet")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(visited) { place in
+                        PlaceRowView(place: place, userDataManager: userDataManager)
+                    }
+                }
+            }
+            Section("Collections") {
+                ForEach(userDataManager.collections) { collection in
+                    let placesInCollection = userDataManager.savedPlaces.filter { $0.collectionId == collection.id }
+                    NavigationLink(destination: CollectionDetailView(collection: collection, places: placesInCollection)) {
+                        HStack {
+                            Image(systemName: "folder.fill")
+                                .foregroundStyle(.orange)
+                            Text(collection.name)
+                            Spacer()
+                            Text("\(placesInCollection.count)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Button {
+                    showAddCollection = true
+                } label: {
+                    Label("New Collection", systemImage: "plus.circle.fill")
+                }
             }
         }
         .navigationTitle("Places")
         .navigationBarTitleDisplayMode(.large)
+        .task {
+            await userDataManager.fetchSavedPlaces()
+            await userDataManager.fetchCollections()
+        }
+        .alert("New Collection", isPresented: $showAddCollection) {
+            TextField("Name", text: $newCollectionName)
+            Button("Cancel", role: .cancel) {
+                newCollectionName = ""
+            }
+            Button("Create") {
+                let name = newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !name.isEmpty {
+                    Task {
+                        await userDataManager.createCollection(name: name)
+                        newCollectionName = ""
+                    }
+                }
+            }
+        } message: {
+            Text("Enter a name for the collection.")
+        }
+    }
+}
+
+struct PlaceRowView: View {
+    let place: SavedPlace
+    @ObservedObject var userDataManager: UserDataManager
+    @State private var showCategoryPicker = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(place.name)
+                .font(.headline)
+            if let addr = place.address, !addr.isEmpty {
+                Text(addr)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(String(format: "%.4f, %.4f", place.latitude, place.longitude))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+                Task { await userDataManager.removeSavedPlace(id: place.id) }
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .contextMenu {
+            ForEach(PlaceCategory.allCases) { cat in
+                if cat != .collection {
+                    Button {
+                        Task { await userDataManager.updateSavedPlace(id: place.id, name: nil, address: nil, category: cat, collectionId: nil) }
+                    } label: {
+                        Label(cat.displayName, systemImage: cat.icon)
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct CollectionDetailView: View {
+    let collection: Collection
+    let places: [SavedPlace]
+    @EnvironmentObject var userDataManager: UserDataManager
+
+    var body: some View {
+        List {
+            if places.isEmpty {
+                Text("No places in this collection.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(places) { place in
+                    PlaceRowView(place: place, userDataManager: userDataManager)
+                }
+            }
+        }
+        .navigationTitle(collection.name)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -1436,4 +1583,5 @@ private struct SignInView: View {
 #Preview {
     ProfileView(isPresented: .constant(true))
         .environmentObject(AuthManager.shared)
+        .environmentObject(UserDataManager.shared)
 }

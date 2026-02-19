@@ -8,6 +8,8 @@ import Combine
 @MainActor
 class RouteService: ObservableObject {
     @Published var route: MKRoute?
+    /// When non-empty, map should draw all legs; navigation uses combined steps.
+    @Published var routeLegs: [MKRoute] = []
     @Published var isCalculating = false
     @Published var error: String?
     
@@ -17,41 +19,82 @@ class RouteService: ObservableObject {
         to destination: CLLocationCoordinate2D,
         transportType: MKDirectionsTransportType
     ) {
+        routeLegs = []
+        calculateRouteWithWaypoints(origin: origin, waypoints: [], destination: destination, transportType: transportType)
+    }
+    
+    /// Calculate route with optional waypoints: origin → waypoint[0] → … → destination
+    func calculateRouteWithWaypoints(
+        origin: CLLocationCoordinate2D,
+        waypoints: [MKMapItem],
+        destination: CLLocationCoordinate2D,
+        transportType: MKDirectionsTransportType
+    ) {
         isCalculating = true
         error = nil
         route = nil
+        routeLegs = []
         
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: origin))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: destination))
-        request.transportType = transportType
-        request.requestsAlternateRoutes = false
+        let allStops: [MKMapItem] = [MKMapItem(placemark: MKPlacemark(coordinate: origin))]
+            + waypoints
+            + [MKMapItem(placemark: MKPlacemark(coordinate: destination))]
         
-        let directions = MKDirections(request: request)
+        guard allStops.count >= 2 else {
+            isCalculating = false
+            return
+        }
         
-        directions.calculate { [weak self] response, error in
-            guard let self = self else { return }
+        var legs: [MKRoute] = []
+        var currentIndex = 0
+        
+        func requestNext() {
+            guard currentIndex < allStops.count - 1 else {
+                Task { @MainActor in
+                    self.isCalculating = false
+                    self.routeLegs = legs
+                    self.route = legs.first
+                }
+                return
+            }
             
-            DispatchQueue.main.async {
-                self.isCalculating = false
-                
-                if let error = error {
-                    self.error = error.localizedDescription
-                    return
+            let request = MKDirections.Request()
+            request.source = allStops[currentIndex]
+            request.destination = allStops[currentIndex + 1]
+            request.transportType = transportType
+            request.requestsAlternateRoutes = false
+            
+            let directions = MKDirections(request: request)
+            directions.calculate { response, err in
+                Task { @MainActor in
+                    if let err = err {
+                        self.isCalculating = false
+                        self.error = err.localizedDescription
+                        return
+                    }
+                    guard let r = response?.routes.first else {
+                        self.isCalculating = false
+                        self.error = "No route found"
+                        return
+                    }
+                    legs.append(r)
+                    currentIndex += 1
+                    if currentIndex < allStops.count - 1 {
+                        requestNext()
+                    } else {
+                        self.isCalculating = false
+                        self.routeLegs = legs
+                        self.route = legs.first
+                    }
                 }
-                
-                guard let route = response?.routes.first else {
-                    self.error = "No route found"
-                    return
-                }
-                
-                self.route = route
             }
         }
+        
+        requestNext()
     }
     
     func clearRoute() {
         route = nil
+        routeLegs = []
         error = nil
     }
 }

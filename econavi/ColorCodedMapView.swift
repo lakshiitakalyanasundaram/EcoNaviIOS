@@ -17,6 +17,9 @@ struct ColorCodedMapView: View {
     @ObservedObject var locationManager: LocationManager
     @ObservedObject var routeService: RouteService
     @ObservedObject var navigationManager: NavigationManager
+    @EnvironmentObject var userDataManager: UserDataManager
+    /// Callback up to ContentView when a destination is chosen from the map.
+    var onDestinationSelected: ((String, CLLocationCoordinate2D) -> Void)? = nil
 
     @StateObject private var placeSearchService = PlaceSearchService()
 
@@ -32,6 +35,12 @@ struct ColorCodedMapView: View {
     @State private var selectedTransportMode: TransportMode = .walk
 
     @State private var recenterTrigger = UUID()
+    @State private var selectedSavedPlace: SavedPlace?
+    @State private var tappedMapCoordinate: CLLocationCoordinate2D?
+    @State private var longPressCoordinate: CLLocationCoordinate2D?
+    @State private var showSavePlaceSheet = false
+    @State private var savePlaceName = ""
+    @State private var savePlaceCategory: PlaceCategory = .favorites
 
     var body: some View {
         ZStack {
@@ -39,14 +48,29 @@ struct ColorCodedMapView: View {
             // MAP
             EnhancedMapView(
                 places: showPins ? placeSearchService.places : [],
+                savedPlaces: userDataManager.savedPlaces,
                 selectedPlace: $selectedPlace,
                 recenterTrigger: recenterTrigger,
                 userLocation: locationManager.location,
                 route: routeService.route,
+                routeLegs: routeService.routeLegs,
                 isNavigating: navigationManager.isNavigating,
                 onPlaceTapped: { place in
                     selectedPlace = place
                     showStartLocationDialog = true
+                },
+                onMapTap: { coordinate in
+                    tappedMapCoordinate = coordinate
+                    onDestinationSelected?("Dropped Pin", coordinate)
+                },
+                onLongPress: { coordinate in
+                    longPressCoordinate = coordinate
+                    savePlaceName = "Dropped Pin"
+                    savePlaceCategory = .favorites
+                    showSavePlaceSheet = true
+                },
+                onSavedPlaceTapped: { place in
+                    selectedSavedPlace = place
                 }
             )
             .ignoresSafeArea()
@@ -72,7 +96,7 @@ struct ColorCodedMapView: View {
                     useCurrentLocation: $useCurrentLocationAsStart,
                     onConfirm: {
                         showStartLocationDialog = false
-                        showTransportSelection = true
+                        onDestinationSelected?(place.name, place.coordinate)
                     }
                 )
             }
@@ -126,28 +150,102 @@ struct ColorCodedMapView: View {
             recenterTrigger = UUID()
         }
         .onChange(of: locationManager.location) { loc in
-            // Center to location when first received
             if let location = loc, !hasCenteredInitially {
                 hasCenteredInitially = true
-                // Trigger recenter immediately and also after a delay to ensure map is ready
                 recenterTrigger = UUID()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     recenterTrigger = UUID()
                 }
             }
 
-            if let location = loc, navigationManager.isNavigating {
-                navigationManager.updateLocation(location)
+            if let location = loc, navigationManager.navigationModeActive {
+                navigationManager.updateLocation(location) { from, to, type in
+                    let waypoints = navigationManager.waypoints
+                    if waypoints.isEmpty {
+                        routeService.calculateRoute(from: from, to: to, transportType: type)
+                    } else {
+                        routeService.calculateRouteWithWaypoints(origin: from, waypoints: waypoints, destination: to, transportType: type)
+                    }
+                }
                 NotificationCenter.default.post(
                     name: .navigationLocationUpdated,
                     object: location
                 )
             }
         }
+        .onChange(of: locationManager.heading) { _ in
+            if navigationManager.navigationModeActive {
+                navigationManager.updateHeading(locationManager.heading)
+            }
+        }
+        .onChange(of: routeService.route) { newRoute in
+            if navigationManager.navigationModeActive, let route = newRoute, !routeService.isCalculating, routeService.routeLegs.isEmpty {
+                navigationManager.startNavigationSession(route: route, locationManager: locationManager, transportMode: navigationManager.transportMode)
+            }
+        }
+        .onChange(of: routeService.routeLegs) { legs in
+            if navigationManager.navigationModeActive, !legs.isEmpty, !routeService.isCalculating {
+                navigationManager.applyRouteLegs(legs)
+            }
+        }
         .onChange(of: locationManager.authorizationStatus) { status in
-            // When permission is granted, get location and center
             if (status == .authorizedWhenInUse || status == .authorizedAlways) && !hasCenteredInitially {
                 locationManager.getCurrentLocation()
+            }
+        }
+        .confirmationDialog("Saved Place", isPresented: Binding(get: { selectedSavedPlace != nil }, set: { if !$0 { selectedSavedPlace = nil } }), titleVisibility: .visible) {
+            if let place = selectedSavedPlace {
+                Button("Navigate here") {
+                    let coord = place.coordinate
+                    selectedSavedPlace = nil
+                    onDestinationSelected?(place.name, coord)
+                }
+                Button("Cancel", role: .cancel) {
+                    selectedSavedPlace = nil
+                }
+            }
+        } message: {
+            if let place = selectedSavedPlace {
+                Text(place.name)
+            }
+        }
+        .sheet(isPresented: $showSavePlaceSheet) {
+            NavigationStack {
+                Form {
+                    TextField("Name", text: $savePlaceName)
+                    Picker("Category", selection: $savePlaceCategory) {
+                        ForEach(PlaceCategory.allCases.filter { $0 != .collection }) { cat in
+                            Text(cat.displayName).tag(cat)
+                        }
+                    }
+                }
+                .navigationTitle("Save Place")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {
+                            showSavePlaceSheet = false
+                            longPressCoordinate = nil
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            guard let coord = longPressCoordinate else { return }
+                            Task {
+                                await userDataManager.addSavedPlace(
+                                    name: savePlaceName.isEmpty ? "Saved Place" : savePlaceName,
+                                    address: nil,
+                                    latitude: coord.latitude,
+                                    longitude: coord.longitude,
+                                    category: savePlaceCategory
+                                )
+                            }
+                            showSavePlaceSheet = false
+                            longPressCoordinate = nil
+                        }
+                        .disabled(savePlaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
             }
         }
     }
@@ -179,12 +277,17 @@ struct ColorCodedMapView: View {
 struct EnhancedMapView: UIViewRepresentable {
 
     let places: [MapPlace]
+    let savedPlaces: [SavedPlace]
     @Binding var selectedPlace: MapPlace?
     let recenterTrigger: UUID
     let userLocation: CLLocation?
     let route: MKRoute?
+    var routeLegs: [MKRoute] = []
     let isNavigating: Bool
     let onPlaceTapped: (MapPlace) -> Void
+    var onMapTap: ((CLLocationCoordinate2D) -> Void)?
+    var onLongPress: ((CLLocationCoordinate2D) -> Void)?
+    var onSavedPlaceTapped: ((SavedPlace) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -197,13 +300,11 @@ struct EnhancedMapView: UIViewRepresentable {
         mapView.showsUserLocation = true
         mapView.userTrackingMode = .none
         
-        // Disable MapKit's default POI icons so our custom pins show correctly
         mapView.pointOfInterestFilter = .excludingAll
         mapView.showsPointsOfInterest = false
         
-        // Set initial region to a default location (will be updated when user location is available)
         let defaultRegion = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 12.9716, longitude: 77.5946), // Default to Bangalore
+            center: CLLocationCoordinate2D(latitude: 12.9716, longitude: 77.5946),
             span: MKCoordinateSpan(latitudeDelta: 0.15, longitudeDelta: 0.15)
         )
         mapView.setRegion(defaultRegion, animated: false)
@@ -214,6 +315,14 @@ struct EnhancedMapView: UIViewRepresentable {
             name: .navigationLocationUpdated,
             object: nil
         )
+
+        let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
+        longPress.minimumPressDuration = 0.5
+        mapView.addGestureRecognizer(longPress)
+
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleMapTap(_:)))
+        tap.cancelsTouchesInView = false
+        mapView.addGestureRecognizer(tap)
 
         return mapView
     }
@@ -257,15 +366,16 @@ struct EnhancedMapView: UIViewRepresentable {
                 // Reset route bounds flag when starting navigation
                 if isNavigating {
                     context.coordinator.hasSetRouteBounds = false
-                    // Set initial route bounds only once when navigation starts
-                    if let route = route {
-                        let routeId = "\(route.distance)-\(route.expectedTravelTime)"
+                    let legsToUse = routeLegs.isEmpty ? (route.map { [$0] } ?? []) : routeLegs
+                    if let first = legsToUse.first {
+                        let routeId = legsToUse.map { "\($0.distance)-\($0.expectedTravelTime)" }.joined(separator: "_")
                         if context.coordinator.lastRouteIdentifier != routeId {
                             context.coordinator.lastRouteIdentifier = routeId
                             context.coordinator.hasSetRouteBounds = true
-                            
-                            // Set route bounds with proper padding for bottom navigation overlay
-                            let rect = route.polyline.boundingMapRect
+                            var rect = first.polyline.boundingMapRect
+                            for leg in legsToUse.dropFirst() {
+                                rect = rect.union(leg.polyline.boundingMapRect)
+                            }
                             mapView.setVisibleMapRect(
                                 rect,
                                 edgePadding: UIEdgeInsets(top: 140, left: 40, bottom: 200, right: 40),
@@ -295,7 +405,11 @@ struct EnhancedMapView: UIViewRepresentable {
 
     private func updateRoute(on mapView: MKMapView) {
         mapView.removeOverlays(mapView.overlays)
-        if let route = route {
+        if !routeLegs.isEmpty {
+            for leg in routeLegs {
+                mapView.addOverlay(leg.polyline)
+            }
+        } else if let route = route {
             mapView.addOverlay(route.polyline)
         }
     }
@@ -348,9 +462,10 @@ struct EnhancedMapView: UIViewRepresentable {
     private func updateAnnotations(on mapView: MKMapView) {
         mapView.removeAnnotations(mapView.annotations.filter { !($0 is MKUserLocation) })
         mapView.addAnnotations(places.map { ColoredAnnotation(place: $0) })
+        mapView.addAnnotations(savedPlaces.map { SavedPlaceAnnotation(place: $0) })
     }
 
-    class Coordinator: NSObject, MKMapViewDelegate {
+    class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         let parent: EnhancedMapView
         weak var mapView: MKMapView?
         var lastRecenterTrigger: UUID?
@@ -361,6 +476,26 @@ struct EnhancedMapView: UIViewRepresentable {
 
         init(_ parent: EnhancedMapView) {
             self.parent = parent
+        }
+
+        @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard gesture.state == .began, let mapView = mapView else { return }
+            let point = gesture.location(in: mapView)
+            let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
+            DispatchQueue.main.async {
+                self.parent.onLongPress?(coordinate)
+            }
+        }
+
+        @objc func handleMapTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended, let mapView = mapView else { return }
+            let point = gesture.location(in: mapView)
+            let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
+            let hitView = mapView.hitTest(point, with: nil)
+            if hitView is MKAnnotationView { return }
+            DispatchQueue.main.async {
+                self.parent.onMapTap?(coordinate)
+            }
         }
 
         @objc func followUser(_ note: Notification) {
@@ -390,8 +525,22 @@ struct EnhancedMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            // Skip user location
             if annotation is MKUserLocation { return nil }
+            
+            if let savedAnnotation = annotation as? SavedPlaceAnnotation {
+                let id = "SavedPlacePin"
+                var v = mapView.dequeueReusableAnnotationView(withIdentifier: id)
+                if v == nil {
+                    v = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: id)
+                    v?.canShowCallout = true
+                } else { v?.annotation = annotation }
+                if let marker = v as? MKMarkerAnnotationView {
+                    marker.markerTintColor = .systemPurple
+                    marker.glyphImage = UIImage(systemName: "heart.fill")
+                    marker.glyphTintColor = .white
+                }
+                return v
+            }
             
             guard let coloredAnnotation = annotation as? ColoredAnnotation else { return nil }
             
@@ -405,15 +554,12 @@ struct EnhancedMapView: UIViewRepresentable {
                 annotationView?.annotation = annotation
             }
             
-            // Configure marker with place type color and icon
             if let markerView = annotationView as? MKMarkerAnnotationView {
                 markerView.markerTintColor = UIColor(coloredAnnotation.place.placeType.color)
-                // Force custom icon instead of MapKit's default POI icons
                 if let iconImage = UIImage(systemName: coloredAnnotation.place.placeType.icon) {
                     markerView.glyphImage = iconImage
                     markerView.glyphTintColor = .white
                 } else {
-                    // Fallback to default icon if system icon not found
                     markerView.glyphImage = nil
                     markerView.glyphText = String(coloredAnnotation.place.placeType.icon.prefix(1))
                 }
@@ -424,6 +570,10 @@ struct EnhancedMapView: UIViewRepresentable {
         }
         
         func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+            if let a = view.annotation as? SavedPlaceAnnotation {
+                parent.onSavedPlaceTapped?(a.place)
+                return
+            }
             guard let a = view.annotation as? ColoredAnnotation else { return }
             parent.onPlaceTapped(a.place)
         }
@@ -446,6 +596,13 @@ class ColoredAnnotation: NSObject, MKAnnotation {
     var coordinate: CLLocationCoordinate2D { place.coordinate }
     var title: String? { place.name }
     init(place: MapPlace) { self.place = place }
+}
+
+class SavedPlaceAnnotation: NSObject, MKAnnotation {
+    let place: SavedPlace
+    var coordinate: CLLocationCoordinate2D { place.coordinate }
+    var title: String? { place.name }
+    init(place: SavedPlace) { self.place = place }
 }
 
 //////////////////////////////////////////////////////////////
@@ -821,7 +978,7 @@ struct NavigationOverlay: View {
     let onStop: () -> Void
     
     private var carbonEmissions: Double {
-        navigationManager.calculateCarbonEmissions()
+        navigationManager.emissionEstimate
     }
     
     private var etaString: String {

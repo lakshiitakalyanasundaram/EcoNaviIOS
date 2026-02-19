@@ -62,13 +62,6 @@ struct Achievement: Identifiable {
     let icon: String
 }
 
-struct Reward: Identifiable {
-    let id = UUID()
-    let name: String
-    let cost: Int
-    let description: String
-}
-
 struct PlaceSuggestion: Identifiable {
     let id = UUID()
     let displayName: String
