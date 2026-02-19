@@ -1,12 +1,14 @@
 import SwiftUI
 import MapKit
 
-// MARK: - Collapsed / Expanded heights
-private let collapsedHeight: CGFloat = 88
-private let expandedHeight: CGFloat = 320
+// MARK: - Layout constants
+private let collapsedHeight: CGFloat = 92
+private let expandedHeight: CGFloat = 340
 private let dragThreshold: CGFloat = 30
+private let topBannerCornerRadius: CGFloat = 16
+private let bottomSheetCornerRadius: CGFloat = 20
 
-/// Overlay UI while navigating: top banner + bottom sheet with collapsed/expanded states (Apple Maps style).
+/// Navigation overlay: top instruction banner + bottom floating sheet (Apple Maps visual hierarchy).
 @MainActor
 struct NavigationModeView: View {
     @ObservedObject var navigationManager: NavigationManager
@@ -23,75 +25,83 @@ struct NavigationModeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top instruction banner
+            // MARK: Top Navigation Banner (Step 5)
             if let instruction = navigationManager.nextInstruction {
-                VStack(spacing: 4) {
-                    HStack {
-                        Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
-                            .font(.title2)
-                        Text(instruction)
-                            .font(.headline)
-                            .lineLimit(2)
-                        Spacer()
-                    }
-                    .padding(.horizontal)
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.primary)
+                    Text(instruction)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .lineLimit(2)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 0)
                 }
-                .padding(.vertical, 10)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
                 .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: topBannerCornerRadius, style: .continuous))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
 
             Spacer(minLength: 0)
 
-            // Bottom sheet: drag handle + content
+            // MARK: Bottom floating sheet (Steps 6, 7, 8, 10)
             VStack(spacing: 0) {
                 // Drag handle
-                RoundedRectangle(cornerRadius: 2.5)
-                    .fill(Color.secondary.opacity(0.4))
+                Capsule()
+                    .fill(Color.primary.opacity(0.25))
                     .frame(width: 36, height: 5)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
 
-                // Collapsed: ETA, distance, time, CO2
-                HStack(alignment: .center, spacing: 16) {
+                // Collapsed: glassmorphic bar (Step 7, 12)
+                HStack(alignment: .center, spacing: 20) {
+                    // ETA – Headline
                     if let eta = navigationManager.eta {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(DateFormatter.localizedString(from: eta, dateStyle: .none, timeStyle: .short))
-                                .font(.title2.bold())
+                                .font(.headline)
+                                .fontWeight(.bold)
                             Text("arrival")
-                                .font(.caption)
+                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(Int(navigationManager.remainingTime / 60))")
-                                .font(.title2.bold())
-                            Text("min")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(String(format: "%.0f", navigationManager.remainingDistance / 1000.0))
-                                .font(.title2.bold())
-                            Text("km")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer()
-                    // CO2 (Step 11)
-                    HStack(spacing: 4) {
-                        Image(systemName: "leaf.fill")
+                    // Remaining time & distance – Subheadline
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(Int(navigationManager.remainingTime / 60)) min")
                             .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Text("remaining")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(String(format: "%.1f km", navigationManager.remainingDistance / 1000.0))
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Text("distance")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    // CO₂ – Caption (Step 12)
+                    HStack(spacing: 6) {
+                        Image(systemName: "leaf.fill")
+                            .font(.caption)
                             .foregroundStyle(.green)
                         Text(String(format: "%.0f g CO₂", navigationManager.emissionEstimate))
-                            .font(.subheadline)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .frame(height: collapsedHeight - 24)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .frame(minHeight: collapsedHeight - 28)
 
                 if isExpanded {
                     NavigationControlSheetView(
@@ -102,21 +112,19 @@ struct NavigationModeView: View {
                         onReportIncident: { showReportIncident = true },
                         onVoiceControls: { showVoiceControls = true }
                     )
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
             .frame(height: sheetHeight)
             .frame(maxWidth: .infinity)
-            .background(
-                LinearGradient(
-                    colors: [Color(.systemBackground).opacity(0.96), Color(.systemBackground).opacity(0.92)],
-                    startPoint: .bottom,
-                    endPoint: .top
-                )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .shadow(color: .black.opacity(0.12), radius: 20, y: -4)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: bottomSheetCornerRadius, style: .continuous))
+            .shadow(color: .black.opacity(0.18), radius: 24, y: -6)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+            .safeAreaPadding(.bottom, 0)
             .gesture(
                 DragGesture()
                     .onChanged { value in
@@ -127,7 +135,7 @@ struct NavigationModeView: View {
                     }
                     .onEnded { value in
                         let velocity = value.predictedEndTranslation.height
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                             if velocity < -80 {
                                 sheetHeight = expandedHeight
                             } else if velocity > 80 {
@@ -141,7 +149,7 @@ struct NavigationModeView: View {
             )
             .onTapGesture(count: 1) {
                 if !isExpanded {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                         sheetHeight = expandedHeight
                     }
                 }
@@ -165,7 +173,7 @@ struct NavigationModeView: View {
     }
 }
 
-// MARK: - NavigationControlSheetView (Expanded content)
+// MARK: - NavigationControlSheetView (Step 8 – Apple Maps style grouped buttons)
 struct NavigationControlSheetView: View {
     @ObservedObject var navigationManager: NavigationManager
     @ObservedObject var routeService: RouteService
@@ -175,34 +183,19 @@ struct NavigationControlSheetView: View {
     var onVoiceControls: () -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                Button(action: onAddStop) {
-                    Label("Add Stop", systemImage: "plus")
-                        .font(.subheadline.weight(.medium))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
+        VStack(spacing: 14) {
+            // Grouped row: Add Stop, Share ETA, Report, Voice
+            VStack(spacing: 0) {
+                NavigationControlRow(icon: "plus.circle.fill", title: "Add Stop", color: .blue, action: onAddStop)
+                Divider().padding(.leading, 52)
                 ShareETAButton(navigationManager: navigationManager)
-                Button(action: onReportIncident) {
-                    Label("Report an Incident", systemImage: "exclamationmark.triangle.fill")
-                        .font(.subheadline.weight(.medium))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
-                Button(action: onVoiceControls) {
-                    Label("Voice Controls", systemImage: "waveform.circle.fill")
-                        .font(.subheadline.weight(.medium))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
+                Divider().padding(.leading, 52)
+                NavigationControlRow(icon: "exclamationmark.triangle.fill", title: "Report an Incident", color: .red, action: onReportIncident)
+                Divider().padding(.leading, 52)
+                NavigationControlRow(icon: "waveform.circle.fill", title: "Voice Controls", color: .gray, action: onVoiceControls)
             }
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             Button(role: .destructive) {
                 navigationManager.stopNavigation()
@@ -212,13 +205,44 @@ struct NavigationControlSheetView: View {
             } label: {
                 Text("End Route")
                     .font(.headline)
+                    .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    .padding(.vertical, 14)
                     .background(Color.red)
                     .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
+            .buttonStyle(.plain)
         }
+    }
+}
+
+private struct NavigationControlRow: View {
+    let icon: String
+    let title: String
+    let color: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(color)
+                    .frame(width: 28, alignment: .center)
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -240,11 +264,22 @@ private struct ShareETAButton: View {
 
     var body: some View {
         ShareLink(item: etaText, subject: Text("My ETA")) {
-            Label("Share ETA", systemImage: "person.2.wave.2.fill")
-                .font(.subheadline.weight(.medium))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            HStack(spacing: 14) {
+                Image(systemName: "person.2.wave.2.fill")
+                    .font(.title3)
+                    .foregroundStyle(.green)
+                    .frame(width: 28, alignment: .center)
+                Text("Share ETA")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
         .buttonStyle(.plain)
     }

@@ -56,25 +56,6 @@ struct ContentView: View {
                 .zIndex(100)
             }
 
-            // MARK: CATEGORY QUICK ACCESS (Home Map – Step 12)
-            if !navigationManager.navigationModeActive {
-                VStack {
-                    Spacer()
-                    HStack {
-                        CategoryQuickAccessView(
-                            userLocation: locationManager.location,
-                            onDestinationSelected: { name, coordinate in
-                                presentDirections(name: name, coordinate: coordinate)
-                            }
-                        )
-                        Spacer()
-                    }
-                    .padding(.leading, 16)
-                    .padding(.bottom, 100)
-                }
-                .zIndex(50)
-            }
-
             // MARK: TOP SEARCH BAR + SUGGESTIONS
             VStack(alignment: .leading, spacing: 12) {
                 // Search Bar

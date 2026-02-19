@@ -94,11 +94,20 @@ struct Contact: Identifiable, Codable {
 enum PlaceType: String, CaseIterable, Identifiable {
     case hospital = "Hospital"
     case restaurant = "Restaurant"
+    case petrolPumps = "Petrol Pumps"
+    case coffee = "Coffee"
+    case parking = "Parking"
+    case publicTransport = "Public Transport"
+    case evCharging = "EV Charging"
     case police = "Police"
     case metro = "Metro"
-    case publicTransport = "Public Transport"
     
     var id: String { rawValue }
+    
+    /// Home map category stack order: Hospitals, Restaurants, Petrol Pumps, Coffee, Parking, Public Transport, EV Charging
+    static var homeStack: [PlaceType] {
+        [.hospital, .restaurant, .petrolPumps, .coffee, .parking, .publicTransport, .evCharging]
+    }
     
     // Apple-style colors
     var color: Color {
@@ -107,12 +116,20 @@ enum PlaceType: String, CaseIterable, Identifiable {
             return Color(red: 1.0, green: 0.231, blue: 0.188) // #FF3B30
         case .restaurant:
             return Color(red: 1.0, green: 0.584, blue: 0.0) // #FF9500
+        case .petrolPumps:
+            return Color(red: 0.0, green: 0.478, blue: 1.0) // #007AFF
+        case .coffee:
+            return Color(red: 0.478, green: 0.318, blue: 0.216) // brown
+        case .parking:
+            return Color(red: 0.0, green: 0.478, blue: 1.0) // #007AFF
+        case .publicTransport:
+            return Color(red: 0.204, green: 0.780, blue: 0.349) // #34C759
+        case .evCharging:
+            return Color(red: 0.204, green: 0.780, blue: 0.349) // #34C759 green
         case .police:
             return Color(red: 0.0, green: 0.478, blue: 1.0) // #007AFF
         case .metro:
             return Color(red: 0.686, green: 0.322, blue: 0.871) // #AF52DE
-        case .publicTransport:
-            return Color(red: 0.204, green: 0.780, blue: 0.349) // #34C759
         }
     }
     
@@ -122,29 +139,43 @@ enum PlaceType: String, CaseIterable, Identifiable {
             return "cross.case.fill"
         case .restaurant:
             return "fork.knife"
+        case .petrolPumps:
+            return "fuelpump.fill"
+        case .coffee:
+            return "cup.and.saucer.fill"
+        case .parking:
+            return "parkingsign"
+        case .publicTransport:
+            return "bus.fill"
+        case .evCharging:
+            return "bolt.car.fill"
         case .police:
             return "shield.fill"
         case .metro:
             return "tram.fill"
-        case .publicTransport:
-            return "bus.fill"
         }
     }
     
-    
-    
-    // MapKit search category
+    // MapKit search category (used when available; naturalLanguageQuery used for all)
     var mapKitCategory: MKPointOfInterestCategory {
         switch self {
         case .hospital:
             return .hospital
         case .restaurant:
             return .restaurant
+        case .petrolPumps:
+            return .gasStation
+        case .coffee:
+            return .cafe
+        case .parking:
+            return .parking
+        case .publicTransport:
+            return .publicTransport
+        case .evCharging:
+            return .evCharger
         case .police:
             return .police
         case .metro:
-            return .publicTransport
-        case .publicTransport:
             return .publicTransport
         }
     }

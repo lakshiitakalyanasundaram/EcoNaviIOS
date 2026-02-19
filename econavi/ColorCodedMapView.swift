@@ -629,7 +629,7 @@ struct SidePanelView: View {
             }
 
             if showPins {
-                ForEach(PlaceType.allCases) { type in
+                ForEach(PlaceType.homeStack) { type in
                     Button {
                         onPlaceTypeSelected(type)
                     } label: {

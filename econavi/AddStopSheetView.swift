@@ -2,7 +2,7 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
-/// Add Stop sheet: search (MKLocalSearch) + category shortcuts. Inserts selected place as waypoint and recalculates route.
+/// Add Stop sheet: POI category search (MKLocalPointsOfInterestRequest) + text search. Inserts selected place as waypoint and recalculates route.
 struct AddStopSheetView: View {
     @Binding var isPresented: Bool
     @ObservedObject var navigationManager: NavigationManager
@@ -14,36 +14,38 @@ struct AddStopSheetView: View {
     @State private var isSearching = false
     @State private var errorMessage: String?
 
-    private let categories: [(name: String, query: String, icon: String, color: Color)] = [
-        ("Dinner", "restaurant dinner food", "fork.knife", .orange),
-        ("Petrol Pumps", "petrol pump gas station", "fuelpump.fill", .blue),
-        ("Hospitals", "hospital", "cross.case.fill", .red),
-        ("Coffee Shops", "coffee cafe", "cup.and.saucer.fill", .brown),
-        ("Parking", "parking", "parkingsign", .blue),
-        ("EV Charging", "EV charging electric vehicle", "bolt.car.fill", .green)
+    /// Category → MKPointOfInterestCategory for POI request (Steps 2, 3, 5)
+    private let categories: [(name: String, category: MKPointOfInterestCategory, icon: String, color: Color)] = [
+        ("Restaurants", .restaurant, "fork.knife", .orange),
+        ("Petrol Pumps", .gasStation, "fuelpump.fill", .blue),
+        ("Hospitals", .hospital, "cross.case.fill", .red),
+        ("Coffee Shops", .cafe, "cup.and.saucer.fill", .brown),
+        ("Parking", .parking, "parkingsign", .blue),
+        ("EV Charging", .evCharger, "bolt.car.fill", .green)
     ]
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Search bar with voice hint (system keyboard dictation available when focused)
+                // Search bar
                 HStack(spacing: 12) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                     TextField("Search for a place", text: $searchText)
                         .textFieldStyle(.plain)
-                        .onSubmit { runSearch(query: searchText) }
+                        .onSubmit { runTextSearch(query: searchText) }
                     if !searchText.isEmpty {
                         Button {
                             searchText = ""
                             searchResults = []
+                            errorMessage = nil
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
                         }
                     }
                     Button {
-                        runSearch(query: searchText)
+                        runTextSearch(query: searchText)
                     } label: {
                         Image(systemName: "mic.fill")
                             .foregroundStyle(.secondary)
@@ -72,7 +74,7 @@ struct AddStopSheetView: View {
                     Section("Categories") {
                         ForEach(categories, id: \.name) { cat in
                             Button {
-                                runSearch(query: cat.query)
+                                runPOISearch(category: cat.category)
                             } label: {
                                 HStack(spacing: 12) {
                                     Image(systemName: cat.icon)
@@ -122,7 +124,7 @@ struct AddStopSheetView: View {
             }
             .onChange(of: searchText) { newValue in
                 if newValue.count >= 2 {
-                    runSearch(query: newValue)
+                    runTextSearch(query: newValue)
                 } else {
                     searchResults = []
                     errorMessage = nil
@@ -131,25 +133,61 @@ struct AddStopSheetView: View {
         }
     }
 
-    private func runSearch(query: String) {
+    // MARK: - POI search (Steps 1, 2, 3, 4, 6) – MKLocalPointsOfInterestRequest
+    private func runPOISearch(category: MKPointOfInterestCategory) {
+        guard let loc = locationManager.location else {
+            errorMessage = "Location unavailable"
+            return
+        }
+        isSearching = true
+        errorMessage = nil
+        searchResults = []
+
+        let center = loc.coordinate
+        let radius: CLLocationDistance = 10_000 // 10 km
+        let request = MKLocalPointsOfInterestRequest(center: center, radius: radius)
+        request.pointOfInterestFilter = MKPointOfInterestFilter(including: [category])
+
+        let search = MKLocalSearch(request: request)
+        search.start { [self] response, error in
+            Task { @MainActor in
+                isSearching = false
+                if let error = error {
+                    errorMessage = error.localizedDescription
+                    searchResults = []
+                    return
+                }
+                let items = response?.mapItems ?? []
+                searchResults = items
+                if items.isEmpty {
+                    errorMessage = "No places found"
+                }
+            }
+        }
+    }
+
+    // Text search: keep MKLocalSearch.Request but always set region (Step 4)
+    private func runTextSearch(query: String) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else {
             searchResults = []
+            return
+        }
+        guard let loc = locationManager.location else {
+            errorMessage = "Location unavailable"
             return
         }
         isSearching = true
         errorMessage = nil
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = q
-        if let loc = locationManager.location {
-            request.region = MKCoordinateRegion(
-                center: loc.coordinate,
-                span: MKCoordinateSpan(latitudeDelta: 0.2, longitudeDelta: 0.2)
-            )
-        }
+        request.region = MKCoordinateRegion(
+            center: loc.coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.15, longitudeDelta: 0.15)
+        )
         request.resultTypes = [.pointOfInterest, .address]
         let search = MKLocalSearch(request: request)
-        search.start { response, error in
+        search.start { [self] response, error in
             Task { @MainActor in
                 isSearching = false
                 if let error = error {
@@ -165,6 +203,7 @@ struct AddStopSheetView: View {
         }
     }
 
+    // Steps 7, 8: Add MKMapItem to waypoints and recalculate route
     private func addStopAndRecalc(_ item: MKMapItem) {
         guard let origin = locationManager.location?.coordinate,
               let dest = navigationManager.destinationCoordinate else { return }
