@@ -25,18 +25,59 @@ struct NavigationModeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // MARK: Top Navigation Banner (Step 5)
+            // STEP 8: Off-route banner
+            if navigationManager.isOffRoute {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(0.9)
+                    Text("Recalculating route…")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+
+            // MARK: Top Navigation Banner – STEP 5/6 (nextInstruction), STEP 14 (timing)
             if let instruction = navigationManager.nextInstruction {
-                HStack(spacing: 12) {
-                    Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.primary)
-                    Text(instruction)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .lineLimit(2)
-                        .foregroundStyle(.primary)
-                    Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.primary)
+                        Text(instruction)
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .lineLimit(2)
+                            .foregroundStyle(.primary)
+                        Spacer(minLength: 0)
+                    }
+                    // STEP 14: Distance to next maneuver (prepare / upcoming / now)
+                    if let dist = navigationManager.distanceToNextManeuver {
+                        let timing = navigationManager.instructionTimingState
+                        Group {
+                            switch timing {
+                            case .now:
+                                Text("Now")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.orange)
+                            case .upcoming:
+                                Text("In \(Int(dist)) m")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            case .prepare:
+                                Text("In \(Int(dist)) m")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            case .none:
+                                EmptyView()
+                            }
+                        }
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 14)
@@ -44,7 +85,7 @@ struct NavigationModeView: View {
                 .clipShape(RoundedRectangle(cornerRadius: topBannerCornerRadius, style: .continuous))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .padding(.top, navigationManager.isOffRoute ? 4 : 8)
             }
 
             Spacer(minLength: 0)
