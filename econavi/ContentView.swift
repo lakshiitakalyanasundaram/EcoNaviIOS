@@ -6,7 +6,7 @@ import CoreLocation
 struct ContentView: View {
 
     @StateObject private var locationManager = LocationManager()
-    @StateObject private var searchService = SearchService()
+    @StateObject private var searchManager = SearchManager()
     @StateObject private var safetyManager = SafetyManager()
     @StateObject private var routeService = RouteService() // Shared route service
     @StateObject private var navigationManager = NavigationManager() // Shared navigation manager
@@ -76,14 +76,13 @@ struct ContentView: View {
                         
                         TextField("Search places", text: $destination)
                             .font(.system(size: 16))
-                            .onChange(of: destination) { newValue in
-                                // Only show suggestions if not interacting with sheet and destination is being typed
-                                if !isInteractingWithSheet && newValue.count >= 2 {
-                                    searchService.updateQuery(newValue)
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            .onChange(of: destination) { _, newValue in
+                                searchManager.updateQuery(newValue)
+                                if !isInteractingWithSheet && !newValue.isEmpty {
+                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                                         showSuggestions = true
                                     }
-                                } else {
+                                } else if newValue.isEmpty {
                                     withAnimation(.spring(response: 0.2)) {
                                         showSuggestions = false
                                     }
@@ -96,7 +95,7 @@ struct ContentView: View {
                                 withAnimation(.spring(response: 0.2)) {
                                     showSuggestions = false
                                 }
-                                searchService.clear()
+                                searchManager.clear()
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 16))
@@ -123,80 +122,27 @@ struct ContentView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
 
-                // Suggestions (hide when in navigation or interacting with sheet)
-                if showSuggestions && !searchService.results.isEmpty && !isInteractingWithSheet && !navigationManager.navigationModeActive {
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            ForEach(Array(searchService.results.enumerated()), id: \.element.id) { index, result in
-                                Button {
-                                    withAnimation(.spring(response: 0.3)) {
-                                        destination = result.title
-                                        showSuggestions = false
-                                        isInteractingWithSheet = false
+                // STEP 14–15: Suggestions dropdown (subscribe to SearchManager.suggestions, Apple Maps style)
+                if showSuggestions && !searchManager.suggestions.isEmpty && !isInteractingWithSheet && !navigationManager.navigationModeActive {
+                    SearchSuggestionsDropdown(
+                        suggestions: searchManager.suggestions,
+                        isResolving: searchManager.isResolving,
+                        onSelect: { completion in
+                            Task {
+                                if let res = await searchManager.resolve(completion: completion) {
+                                    await MainActor.run {
+                                        withAnimation(.spring(response: 0.3)) {
+                                            destination = res.name
+                                            showSuggestions = false
+                                            isInteractingWithSheet = false
+                                        }
+                                        searchManager.clear()
+                                        presentDirections(name: res.name, coordinate: res.coordinate)
                                     }
-                                    searchService.clear()
-                                    presentDirections(name: result.title,
-                                                      coordinate: result.coordinate)
-                                } label: {
-                                    HStack(spacing: 14) {
-                                        // Icon with background
-                                        ZStack {
-                                            Circle()
-                                                .fill(Color.blue.opacity(0.1))
-                                                .frame(width: 40, height: 40)
-                                            
-                                            Image(systemName: index < 3 ? "star.fill" : "mappin.circle.fill")
-                                                .font(.system(size: 18, weight: .medium))
-                                                .foregroundStyle(index < 3 ? Color.orange : Color.blue)
-                                        }
-
-                                        // Text content
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(result.title)
-                                                .font(.system(size: 16, weight: .medium))
-                                                .foregroundStyle(.primary)
-                                                .lineLimit(1)
-                                            
-                                            if !result.subtitle.isEmpty {
-                                                Text(result.subtitle)
-                                                    .font(.system(size: 13))
-                                                    .foregroundStyle(.secondary)
-                                                    .lineLimit(1)
-                                            }
-                                        }
-                                        
-                                        Spacer()
-
-                                        // Distance badge
-                                        if result.distance > 0 {
-                                            HStack(spacing: 4) {
-                                                Image(systemName: "location.fill")
-                                                    .font(.system(size: 10))
-                                                Text(result.distance < 1000 ? "\(Int(result.distance))m" : String(format: "%.1f km", result.distance / 1000))
-                                                    .font(.system(size: 12, weight: .medium))
-                                            }
-                                            .foregroundStyle(.secondary)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(Color(.systemGray6), in: Capsule())
-                                        }
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 14)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-
-                                if index < searchService.results.count - 1 {
-                                    Divider()
-                                        .padding(.leading, 70)
                                 }
                             }
                         }
-                    }
-                    .frame(maxHeight: min(400, CGFloat(searchService.results.count) * 70))
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-                    .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 8)
+                    )
                     .padding(.horizontal, 16)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
@@ -296,12 +242,12 @@ struct ContentView: View {
         .onAppear {
             locationManager.requestPermission()
             locationManager.getCurrentLocation()
+            searchManager.updateRegion(region)
         }
-
         .onChange(of: locationManager.location) {
             if let loc = locationManager.location {
                 region.center = loc.coordinate
-                searchService.updateUserLocation(loc)
+                searchManager.updateRegion(region)
             }
         }
         .onChange(of: navigationManager.navigationModeActive) { active in
@@ -317,6 +263,92 @@ struct ContentView: View {
         showDirectionsSheet = true
     }
 }
+
+// MARK: - Search suggestions dropdown (STEP 15 – Apple Maps style)
+private struct SearchSuggestionsDropdown: View {
+    let suggestions: [MKLocalSearchCompletion]
+    let isResolving: Bool
+    let onSelect: (MKLocalSearchCompletion) -> Void
+
+    private let maxVisibleRows = 6
+    private let rowHeight: CGFloat = 56
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if isResolving {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(0.9)
+                    Text("Finding…")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+            }
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(suggestions.prefix(maxVisibleRows * 2).enumerated()), id: \.offset) { index, completion in
+                        Button {
+                            onSelect(completion)
+                        } label: {
+                            HStack(spacing: 14) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.blue.opacity(0.1))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: imageName(for: completion))
+                                        .font(.system(size: 18, weight: .medium))
+                                        .foregroundStyle(Color.blue)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(completion.title)
+                                        .font(.system(size: 16, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                    if !completion.subtitle.isEmpty {
+                                        Text(completion.subtitle)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isResolving)
+
+                        if index < min(suggestions.count, maxVisibleRows * 2) - 1 {
+                            Divider()
+                                .padding(.leading, 70)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: min(400, CGFloat(min(suggestions.count, maxVisibleRows * 2)) * rowHeight))
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 8)
+    }
+
+    private func imageName(for completion: MKLocalSearchCompletion) -> String {
+        if completion.subtitle.contains("Airport") || completion.subtitle.contains("Station") {
+            return "airplane"
+        }
+        if completion.title.contains("Restaurant") || completion.title.contains("Cafe") || completion.title.contains("Coffee") {
+            return "fork.knife"
+        }
+        return "mappin.circle.fill"
+    }
+}
+
 struct SidebarView: View {
 
     @Binding var origin: String
