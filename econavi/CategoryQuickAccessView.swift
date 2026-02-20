@@ -11,20 +11,21 @@ struct CategoryQuickAccessView: View {
     @State private var categoryResults: [MKMapItem] = []
     @State private var isSearching = false
 
-    private let categories: [(name: String, query: String, icon: String, color: Color)] = [
-        ("Dinner", "restaurant dinner food", "fork.knife", .orange),
-        ("Petrol", "petrol pump gas station", "fuelpump.fill", .blue),
-        ("Hospitals", "hospital", "hospital", .red),
-        ("Coffee", "coffee cafe", "cup.and.saucer.fill", .brown),
-        ("Parking", "parking", "parkingsign", .blue),
-        ("EV Charging", "EV charging", "bolt.car.fill", .green)
+    /// STEP 9: Category → MKPointOfInterestCategory (no naturalLanguageQuery).
+    private let categories: [(name: String, category: MKPointOfInterestCategory, icon: String, color: Color)] = [
+        ("Dinner", .restaurant, "fork.knife", .orange),
+        ("Petrol", .gasStation, "fuelpump.fill", .blue),
+        ("Hospitals", .hospital, "hospital", .red),
+        ("Coffee", .cafe, "cup.and.saucer.fill", .brown),
+        ("Parking", .parking, "parkingsign", .blue),
+        ("EV Charging", .evCharger, "bolt.car.fill", .green)
     ]
 
     var body: some View {
         VStack(spacing: 10) {
             ForEach(categories, id: \.name) { cat in
                 Button {
-                    selectedCategory = Cat(id: cat.name, query: cat.query)
+                    selectedCategory = Cat(id: cat.name, category: cat.category)
                 } label: {
                     Image(systemName: cat.icon)
                         .font(.system(size: 18, weight: .medium))
@@ -40,7 +41,6 @@ struct CategoryQuickAccessView: View {
         .sheet(item: $selectedCategory) { cat in
             CategoryResultsSheet(
                 categoryName: cat.id,
-                query: cat.query,
                 userLocation: userLocation,
                 results: $categoryResults,
                 isSearching: $isSearching,
@@ -53,27 +53,23 @@ struct CategoryQuickAccessView: View {
         }
         .onChange(of: selectedCategory) { new in
             if let cat = new {
-                runCategorySearch(cat.query)
+                runCategorySearch(cat.category)
             } else {
                 categoryResults = []
             }
         }
     }
 
-    private func runCategorySearch(_ query: String) {
+    /// STEP 9: MKLocalPointsOfInterestRequest — search area is defined by center + radius (region is read-only).
+    private func runCategorySearch(_ category: MKPointOfInterestCategory) {
+        guard let loc = userLocation else { return }
         isSearching = true
         categoryResults = []
-        let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = query
-        if let loc = userLocation {
-            request.region = MKCoordinateRegion(
-                center: loc.coordinate,
-                span: MKCoordinateSpan(latitudeDelta: 0.15, longitudeDelta: 0.15)
-            )
-        }
-        request.resultTypes = [.pointOfInterest, .address]
+        let center = loc.coordinate
+        let request = MKLocalPointsOfInterestRequest(center: center, radius: 5000)
+        request.pointOfInterestFilter = MKPointOfInterestFilter(including: [category])
         let search = MKLocalSearch(request: request)
-        search.start { response, error in
+        search.start { response, _ in
             Task { @MainActor in
                 isSearching = false
                 categoryResults = response?.mapItems ?? []
@@ -84,12 +80,11 @@ struct CategoryQuickAccessView: View {
 
 private struct Cat: Identifiable, Equatable {
     let id: String
-    let query: String
+    let category: MKPointOfInterestCategory
 }
 
 private struct CategoryResultsSheet: View {
     let categoryName: String
-    let query: String
     let userLocation: CLLocation?
     @Binding var results: [MKMapItem]
     @Binding var isSearching: Bool
