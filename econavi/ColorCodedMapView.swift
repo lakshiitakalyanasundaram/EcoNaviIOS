@@ -55,6 +55,8 @@ struct ColorCodedMapView: View {
                 route: routeService.route,
                 routeLegs: routeService.routeLegs,
                 isNavigating: navigationManager.isNavigating,
+                snappedLocation: navigationManager.snappedLocation,
+                userHeading: navigationManager.userHeading,
                 onPlaceTapped: { place in
                     selectedPlace = place
                     showStartLocationDialog = true
@@ -284,6 +286,10 @@ struct EnhancedMapView: UIViewRepresentable {
     let route: MKRoute?
     var routeLegs: [MKRoute] = []
     let isNavigating: Bool
+    /// Snapped-to-route position for navigation camera (STEP 10, 11).
+    var snappedLocation: CLLocationCoordinate2D?
+    /// User heading for camera rotation (STEP 11).
+    var userHeading: CLLocationDirection?
     let onPlaceTapped: (MapPlace) -> Void
     var onMapTap: ((CLLocationCoordinate2D) -> Void)?
     var onLongPress: ((CLLocationCoordinate2D) -> Void)?
@@ -355,43 +361,48 @@ struct EnhancedMapView: UIViewRepresentable {
             }
         }
 
-        // Handle navigation mode changes - only update when actually changing
-        let newTrackingMode: MKUserTrackingMode = isNavigating ? .followWithHeading : .none
-        if mapView.userTrackingMode != newTrackingMode {
-            // Use a flag to prevent multiple rapid changes
-            if !context.coordinator.isChangingTrackingMode {
-                context.coordinator.isChangingTrackingMode = true
-                mapView.userTrackingMode = newTrackingMode
-                
-                // Reset route bounds flag when starting navigation
-                if isNavigating {
-                    context.coordinator.hasSetRouteBounds = false
-                    let legsToUse = routeLegs.isEmpty ? (route.map { [$0] } ?? []) : routeLegs
-                    if let first = legsToUse.first {
-                        let routeId = legsToUse.map { "\($0.distance)-\($0.expectedTravelTime)" }.joined(separator: "_")
-                        if context.coordinator.lastRouteIdentifier != routeId {
-                            context.coordinator.lastRouteIdentifier = routeId
-                            context.coordinator.hasSetRouteBounds = true
-                            var rect = first.polyline.boundingMapRect
-                            for leg in legsToUse.dropFirst() {
-                                rect = rect.union(leg.polyline.boundingMapRect)
+        // STEP 11: Navigation camera mode – center on snapped location, rotate by heading, pitch
+        let useNavigationCamera = isNavigating && snappedLocation != nil
+        if useNavigationCamera, let center = snappedLocation {
+            let heading = userHeading ?? 0
+            let camera = MKMapCamera(lookingAtCenter: center, fromDistance: 380, pitch: 45, heading: heading)
+            mapView.setCamera(camera, animated: true)
+            if mapView.userTrackingMode != .none {
+                mapView.userTrackingMode = .none
+            }
+        } else {
+            // Handle navigation mode: when navigating but no snap yet, use follow-with-heading
+            let newTrackingMode: MKUserTrackingMode = isNavigating ? .followWithHeading : .none
+            if mapView.userTrackingMode != newTrackingMode {
+                if !context.coordinator.isChangingTrackingMode {
+                    context.coordinator.isChangingTrackingMode = true
+                    mapView.userTrackingMode = newTrackingMode
+                    if isNavigating {
+                        context.coordinator.hasSetRouteBounds = false
+                        let legsToUse = routeLegs.isEmpty ? (route.map { [$0] } ?? []) : routeLegs
+                        if let first = legsToUse.first {
+                            let routeId = legsToUse.map { "\($0.distance)-\($0.expectedTravelTime)" }.joined(separator: "_")
+                            if context.coordinator.lastRouteIdentifier != routeId {
+                                context.coordinator.lastRouteIdentifier = routeId
+                                context.coordinator.hasSetRouteBounds = true
+                                var rect = first.polyline.boundingMapRect
+                                for leg in legsToUse.dropFirst() {
+                                    rect = rect.union(leg.polyline.boundingMapRect)
+                                }
+                                mapView.setVisibleMapRect(
+                                    rect,
+                                    edgePadding: UIEdgeInsets(top: 140, left: 40, bottom: 200, right: 40),
+                                    animated: true
+                                )
                             }
-                            mapView.setVisibleMapRect(
-                                rect,
-                                edgePadding: UIEdgeInsets(top: 140, left: 40, bottom: 200, right: 40),
-                                animated: true
-                            )
                         }
+                    } else {
+                        context.coordinator.lastRouteIdentifier = nil
+                        context.coordinator.hasSetRouteBounds = false
                     }
-                } else {
-                    // Clear route tracking when not navigating
-                    context.coordinator.lastRouteIdentifier = nil
-                    context.coordinator.hasSetRouteBounds = false
-                }
-                
-                // Reset flag after a delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    context.coordinator.isChangingTrackingMode = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        context.coordinator.isChangingTrackingMode = false
+                    }
                 }
             }
         }
@@ -512,9 +523,9 @@ struct EnhancedMapView: UIViewRepresentable {
             }
             lastLocationUpdate = now
 
+            // When using navigation camera (snapped location), camera is driven by updateUIView – don't override
+            if parent.snappedLocation != nil { return }
             // When using userTrackingMode.followWithHeading, MapKit handles following automatically
-            // Don't manually interfere with region updates to prevent zoom loops
-            // Only update if tracking mode is somehow not active (shouldn't happen during navigation)
             if mapView.userTrackingMode == .none && !isChangingTrackingMode {
                 let region = MKCoordinateRegion(
                     center: location.coordinate,
@@ -929,15 +940,9 @@ struct PlaceDetailView: View {
         // Start location tracking and navigation after a brief delay to allow view to close
         // Use a longer delay to ensure UI is fully settled and prevent glitches
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            // Ensure we have a valid route and location before starting
-            guard let currentRoute = self.routeService.route,
-                  let currentLocation = self.locationManager.location else {
-                return
-            }
-            
-            // Use the selected transport mode
-            self.locationManager.startTracking()
-            self.navigationManager.startNavigation(route: currentRoute, userLocation: currentLocation, transportMode: self.selectedTransportMode)
+            guard let currentRoute = self.routeService.route else { return }
+            // STEP 12: Start active navigation session (location + heading updates, step-based)
+            self.navigationManager.startNavigationSession(route: currentRoute, locationManager: self.locationManager, transportMode: self.selectedTransportMode)
         }
     }
     
