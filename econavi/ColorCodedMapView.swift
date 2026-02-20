@@ -55,6 +55,8 @@ struct ColorCodedMapView: View {
                 route: routeService.route,
                 routeLegs: routeService.routeLegs,
                 isNavigating: navigationManager.isNavigating,
+                completedRoutePolyline: navigationManager.completedRoutePolyline,
+                remainingRoutePolyline: navigationManager.remainingRoutePolyline,
                 snappedLocation: navigationManager.snappedLocation,
                 userHeading: navigationManager.userHeading,
                 onPlaceTapped: { place in
@@ -190,6 +192,11 @@ struct ColorCodedMapView: View {
                 navigationManager.applyRouteLegs(legs)
             }
         }
+        .onChange(of: navigationManager.navigationModeActive) { active in
+            if !active {
+                routeService.clearRoute()
+            }
+        }
         .onChange(of: locationManager.authorizationStatus) { status in
             if (status == .authorizedWhenInUse || status == .authorizedAlways) && !hasCenteredInitially {
                 locationManager.getCurrentLocation()
@@ -286,6 +293,9 @@ struct EnhancedMapView: UIViewRepresentable {
     let route: MKRoute?
     var routeLegs: [MKRoute] = []
     let isNavigating: Bool
+    /// STEP 4: Completed (grey) and remaining (blue) segments during navigation.
+    var completedRoutePolyline: MKPolyline?
+    var remainingRoutePolyline: MKPolyline?
     /// Snapped-to-route position for navigation camera (STEP 10, 11).
     var snappedLocation: CLLocationCoordinate2D?
     /// User heading for camera rotation (STEP 11).
@@ -416,7 +426,10 @@ struct EnhancedMapView: UIViewRepresentable {
 
     private func updateRoute(on mapView: MKMapView) {
         mapView.removeOverlays(mapView.overlays)
-        if !routeLegs.isEmpty {
+        if isNavigating, completedRoutePolyline != nil || remainingRoutePolyline != nil {
+            if let completed = completedRoutePolyline { mapView.addOverlay(completed) }
+            if let remaining = remainingRoutePolyline { mapView.addOverlay(remaining) }
+        } else if !routeLegs.isEmpty {
             for leg in routeLegs {
                 mapView.addOverlay(leg.polyline)
             }
@@ -591,7 +604,13 @@ struct EnhancedMapView: UIViewRepresentable {
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             let r = MKPolylineRenderer(overlay: overlay)
-            r.strokeColor = .systemBlue
+            if overlay is CompletedRouteOverlay {
+                r.strokeColor = .systemGray
+            } else if overlay is RemainingRouteOverlay {
+                r.strokeColor = .systemBlue
+            } else {
+                r.strokeColor = .systemBlue
+            }
             r.lineWidth = 5
             return r
         }

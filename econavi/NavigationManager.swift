@@ -12,6 +12,17 @@ enum InstructionTimingState: String {
     case now        // < 50 m
 }
 
+// MARK: - Route segment overlays (STEP 4: grey completed / blue remaining)
+final class CompletedRouteOverlay: MKPolyline {}
+final class RemainingRouteOverlay: MKPolyline {}
+
+// MARK: - Trip completion summary (STEP 17)
+struct TripCompletionSummary: Equatable {
+    let distanceKm: Double
+    let carbonGrams: Double
+    let mode: String
+}
+
 /// Central navigation state (route, ETA, instructions, emissions).
 @MainActor
 final class NavigationManager: ObservableObject {
@@ -32,6 +43,13 @@ final class NavigationManager: ObservableObject {
     @Published var instructionTimingState: InstructionTimingState = .none
     @Published var isOffRoute: Bool = false
 
+    // STEP 1, 4: Completed (grey) vs remaining (blue) route segments
+    @Published private(set) var completedRoutePolyline: MKPolyline?
+    @Published private(set) var remainingRoutePolyline: MKPolyline?
+
+    // STEP 17: Trip completion banner
+    @Published var tripJustCompleted: TripCompletionSummary?
+
     // Backwards‑compat fields (existing UI still uses these)
     @Published var isNavigating: Bool = false
     @Published var currentInstruction: String?
@@ -46,15 +64,17 @@ final class NavigationManager: ObservableObject {
     @Published var userHeading: CLLocationDirection?
     @Published var waypoints: [MKMapItem] = []
 
-    // Internals
+    // Internals (STEP 14: delegate set in LocationManager only; STEP 15: weak to prevent leaks)
+    private weak var sessionLocationManager: LocationManager?
     private var userLocation: CLLocation?
     private var routeSteps: [MKRoute.Step] = []
     private var routeLegs: [MKRoute] = []
     private var lastRecalcLocation: CLLocation?
+    private var tripStartLocation: CLLocation?
     private let recalcThreshold: CLLocationDistance = 80 // meters
     private let stepAdvanceThreshold: CLLocationDistance = 35 // meters to advance to next step
     private let offRouteThreshold: CLLocationDistance = 50 // STEP 8
-    private let destinationArrivalThreshold: CLLocationDistance = 25 // STEP 15
+    private let destinationArrivalThreshold: CLLocationDistance = 30 // STEP 6: 30 meters
     private let instructionPrepareDistance: CLLocationDistance = 500 // STEP 14
     private let instructionUpcomingDistance: CLLocationDistance = 200
     private let instructionNowDistance: CLLocationDistance = 50
@@ -96,9 +116,11 @@ final class NavigationManager: ObservableObject {
         startNavigationSession(routeLegs: [route], locationManager: locationManager, transportMode: transportMode)
     }
 
-    /// Start a live navigation session with optional multi-leg route (waypoints).
+    /// Start a live navigation session with optional multi-leg route (waypoints). STEP 14: LocationManager keeps single delegate.
     func startNavigationSession(routeLegs legs: [MKRoute], locationManager: LocationManager, transportMode: TransportMode = .walk) {
         let loc = locationManager.location
+        self.sessionLocationManager = locationManager
+        self.tripStartLocation = loc
         self.routeLegs = legs
         self.route = legs.first
         self.currentRoute = legs.first
@@ -110,6 +132,9 @@ final class NavigationManager: ObservableObject {
         self.nextStep = routeSteps.dropFirst().first
         self.userHeading = locationManager.heading?.trueHeading
         lastRecalcLocation = nil
+        completedRoutePolyline = nil
+        remainingRoutePolyline = nil
+        tripJustCompleted = nil
         locationManager.startTracking()
         locationManager.startHeadingUpdates()
         isNavigating = true
@@ -128,6 +153,8 @@ final class NavigationManager: ObservableObject {
         self.currentStep = routeSteps.indices.contains(currentStepIndex) ? routeSteps[currentStepIndex] : routeSteps.first
         self.nextStep = routeSteps.dropFirst(currentStepIndex + 1).first
         isOffRoute = false
+        completedRoutePolyline = nil
+        remainingRoutePolyline = nil
         updateMetrics()
     }
 
@@ -152,12 +179,21 @@ final class NavigationManager: ObservableObject {
 
         userLocation = location
 
-        // STEP 10: Snap user location to route polyline for smoother camera
+        // STEP 2, 3: Snap and trim route into completed (travelled) vs remaining (upcoming)
         let routePolylines = routeLegs.map(\.polyline)
-        if let (snapped, _) = Self.nearestPointOnPolylines(from: location, polylines: routePolylines) {
-            snappedLocation = snapped
+        let allCoords = routePolylines.flatMap { $0.coordinates }
+        let snapped: CLLocationCoordinate2D
+        if let (point, _) = Self.nearestPointOnPolylines(from: location, polylines: routePolylines) {
+            snapped = point
+            snappedLocation = point
         } else {
+            snapped = location.coordinate
             snappedLocation = location.coordinate
+        }
+        if !allCoords.isEmpty {
+            let (completedCoords, remainingCoords) = Self.splitRoute(at: snapped, coordinates: allCoords)
+            completedRoutePolyline = Self.makePolyline(completedCoords, completed: true)
+            remainingRoutePolyline = Self.makePolyline(remainingCoords, completed: false)
         }
 
         // STEP 8: Off-route detection – recalc only when first going off-route
@@ -174,11 +210,11 @@ final class NavigationManager: ObservableObject {
             updateCurrentStep(from: location, in: r)
         }
 
-        // STEP 15: End navigation when within threshold of destination
+        // STEP 6, 7: Arrival – end session when within 30m of destination
         if let dest = destinationCoordinate {
             let destLocation = CLLocation(latitude: dest.latitude, longitude: dest.longitude)
             if location.distance(from: destLocation) < destinationArrivalThreshold {
-                stopNavigation()
+                endNavigationSession(arrivalLocation: location)
                 return
             }
         }
@@ -221,7 +257,48 @@ final class NavigationManager: ObservableObject {
         }
     }
 
+    /// STEP 7, 8: End session on arrival – stop updates, compute trip stats, write reward, show banner.
+    func endNavigationSession(arrivalLocation: CLLocation) {
+        // STEP 8: Stop CLLocationManager and heading updates
+        sessionLocationManager?.stopTracking()
+        sessionLocationManager?.stopHeadingUpdates()
+        sessionLocationManager = nil
+
+        // STEP 9, 10: Trip distance and carbon
+        let tripDistanceM: CLLocationDistance
+        if let completed = completedRoutePolyline, !completed.coordinates.isEmpty {
+            tripDistanceM = Self.polylineLength(completed.coordinates)
+        } else if let start = tripStartLocation {
+            tripDistanceM = start.distance(from: arrivalLocation)
+        } else {
+            tripDistanceM = 0
+        }
+        let tripDistanceKm = tripDistanceM / 1000.0
+        let tripCarbonGrams = EmissionsCalculatorIndia.calculateEmissions(mode: transportMode.rawValue, distanceKm: tripDistanceKm)
+
+        let modeName = transportMode.rawValue
+        tripJustCompleted = TripCompletionSummary(distanceKm: tripDistanceKm, carbonGrams: tripCarbonGrams, mode: modeName)
+        clearSession(clearTripBanner: false)
+
+        // STEP 11, 12: Write to Supabase rewards (STEP 13: weak self)
+        let credits = max(1, EmissionsCalculatorIndia.calculateCarbonCredits(savedEmissionsGrams: tripCarbonGrams))
+        let reason = String(format: "Trip %.2f km", tripDistanceKm)
+        Task { [weak self] in
+            await UserDataManager.shared.addRewardPoints(credits, reason: reason)
+        }
+    }
+
+    /// User tapped "End Route" – stop updates and clear state (no reward).
     func stopNavigation() {
+        sessionLocationManager?.stopTracking()
+        sessionLocationManager?.stopHeadingUpdates()
+        sessionLocationManager = nil
+        clearSession(clearTripBanner: true)
+    }
+
+    /// STEP 8, 15: Reset all session state; no timers to cancel (STEP 13).
+    private func clearSession(clearTripBanner: Bool = true) {
+        if clearTripBanner { tripJustCompleted = nil }
         isNavigating = false
         navigationModeActive = false
         route = nil
@@ -237,7 +314,6 @@ final class NavigationManager: ObservableObject {
         nextStep = nil
         routeSteps = []
         routeLegs = []
-
         waypoints = []
         currentStepIndex = 0
         userHeading = nil
@@ -246,10 +322,13 @@ final class NavigationManager: ObservableObject {
         eta = nil
         userLocation = nil
         lastRecalcLocation = nil
+        tripStartLocation = nil
         snappedLocation = nil
         distanceToNextManeuver = nil
         instructionTimingState = .none
         isOffRoute = false
+        completedRoutePolyline = nil
+        remainingRoutePolyline = nil
     }
 
     // MARK: Internal calculations
@@ -317,18 +396,24 @@ final class NavigationManager: ObservableObject {
             return
         }
 
-        var remaining: CLLocationDistance = 0
-        if let currentStep = currentStep,
-           currentStepIndex < routeSteps.count,
-           let loc = userLocation {
-            let coords = currentStep.polyline.coordinates
-            if let last = coords.last {
-                let end = CLLocation(latitude: last.latitude, longitude: last.longitude)
-                remaining += loc.distance(from: end)
+        // STEP 5: Prefer remaining distance from remaining polyline when available
+        var remaining: CLLocationDistance
+        if let rem = remainingRoutePolyline {
+            remaining = Self.polylineLength(rem.coordinates)
+        } else {
+            remaining = 0
+            if let currentStep = currentStep,
+               currentStepIndex < routeSteps.count,
+               let loc = userLocation {
+                let coords = currentStep.polyline.coordinates
+                if let last = coords.last {
+                    let end = CLLocation(latitude: last.latitude, longitude: last.longitude)
+                    remaining += loc.distance(from: end)
+                }
             }
-        }
-        for i in (currentStepIndex + 1)..<routeSteps.count {
-            remaining += routeSteps[i].distance
+            for i in (currentStepIndex + 1)..<routeSteps.count {
+                remaining += routeSteps[i].distance
+            }
         }
 
         remainingDistance = remaining
@@ -465,6 +550,51 @@ final class NavigationManager: ObservableObject {
         )
         let nearestLoc = CLLocation(latitude: nearest.latitude, longitude: nearest.longitude)
         return (nearest, location.distance(from: nearestLoc))
+    }
+
+    // MARK: - STEP 1, 3: Split route at snapped point (completed vs remaining)
+
+    private static func splitRoute(at snapped: CLLocationCoordinate2D, coordinates: [CLLocationCoordinate2D]) -> (completed: [CLLocationCoordinate2D], remaining: [CLLocationCoordinate2D]) {
+        guard coordinates.count >= 2 else {
+            if coordinates.count == 1 {
+                return ([snapped], [snapped])
+            }
+            return ([], [])
+        }
+        let loc = CLLocation(latitude: snapped.latitude, longitude: snapped.longitude)
+        var bestIndex = 0
+        var bestDist: CLLocationDistance = .greatestFiniteMagnitude
+        for i in 0..<(coordinates.count - 1) {
+            let (_, d) = nearestPointOnSegment(location: loc, segmentStart: coordinates[i], segmentEnd: coordinates[i + 1])
+            if d < bestDist {
+                bestDist = d
+                bestIndex = i
+            }
+        }
+        let completed = Array(coordinates.prefix(bestIndex + 1)) + [snapped]
+        let remaining = [snapped] + Array(coordinates.suffix(from: bestIndex + 1))
+        return (completed, remaining)
+    }
+
+    private static func makePolyline(_ coords: [CLLocationCoordinate2D], completed: Bool) -> MKPolyline? {
+        guard coords.count >= 2 else { return nil }
+        var arr = coords
+        if completed {
+            return CompletedRouteOverlay(coordinates: &arr, count: arr.count)
+        } else {
+            return RemainingRouteOverlay(coordinates: &arr, count: arr.count)
+        }
+    }
+
+    private static func polylineLength(_ coords: [CLLocationCoordinate2D]) -> CLLocationDistance {
+        guard coords.count >= 2 else { return 0 }
+        var total: CLLocationDistance = 0
+        for i in 0..<(coords.count - 1) {
+            let a = CLLocation(latitude: coords[i].latitude, longitude: coords[i].longitude)
+            let b = CLLocation(latitude: coords[i + 1].latitude, longitude: coords[i + 1].longitude)
+            total += a.distance(from: b)
+        }
+        return total
     }
 }
 

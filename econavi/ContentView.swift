@@ -56,6 +56,15 @@ struct ContentView: View {
                 .zIndex(100)
             }
 
+            // STEP 17: Trip completion banner on arrival
+            if let summary = navigationManager.tripJustCompleted {
+                TripCompletionBanner(summary: summary) {
+                    navigationManager.tripJustCompleted = nil
+                }
+                .zIndex(101)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             // MARK: TOP SEARCH BAR + SUGGESTIONS
             VStack(alignment: .leading, spacing: 12) {
                 // Search Bar
@@ -346,6 +355,53 @@ private struct SearchSuggestionsDropdown: View {
             return "fork.knife"
         }
         return "mappin.circle.fill"
+    }
+}
+
+// MARK: - STEP 17: Trip completion banner
+private struct TripCompletionBanner: View {
+    let summary: TripCompletionSummary
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.green)
+                Text("You arrived")
+                    .font(.headline.weight(.semibold))
+            }
+            HStack(spacing: 24) {
+                VStack(spacing: 2) {
+                    Text(String(format: "%.2f km", summary.distanceKm))
+                        .font(.subheadline.weight(.semibold))
+                    Text("Distance")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(spacing: 2) {
+                    Text(EmissionsCalculatorIndia.formatEmissions(summary.carbonGrams))
+                        .font(.subheadline.weight(.semibold))
+                    Text("Carbon")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Button("Done") {
+                onDismiss()
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color.green, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .padding(20)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.2), radius: 16, y: 8)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 120)
     }
 }
 
