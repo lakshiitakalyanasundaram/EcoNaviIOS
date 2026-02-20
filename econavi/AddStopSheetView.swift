@@ -133,7 +133,7 @@ struct AddStopSheetView: View {
         }
     }
 
-    // MARK: - POI search (Steps 1, 2, 3, 4, 6) – MKLocalPointsOfInterestRequest
+    // MARK: - POI search (STEP 1–2 region; EV Charging uses fallback helper to avoid MKErrorDomain 4)
     private func runPOISearch(category: MKPointOfInterestCategory) {
         guard let loc = locationManager.location else {
             errorMessage = "Location unavailable"
@@ -144,10 +144,22 @@ struct AddStopSheetView: View {
         searchResults = []
 
         let center = loc.coordinate
-        let radius: CLLocationDistance = 10_000 // 10 km
+
+        if category == .evCharger {
+            Task { @MainActor in
+                let items = await EVChargingSearchHelper.searchEVCharging(center: center)
+                isSearching = false
+                searchResults = items
+                if items.isEmpty {
+                    errorMessage = "No EV charging stations found"
+                }
+            }
+            return
+        }
+
+        let radius: CLLocationDistance = 10_000
         let request = MKLocalPointsOfInterestRequest(center: center, radius: radius)
         request.pointOfInterestFilter = MKPointOfInterestFilter(including: [category])
-
         let search = MKLocalSearch(request: request)
         search.start { [self] response, error in
             Task { @MainActor in
