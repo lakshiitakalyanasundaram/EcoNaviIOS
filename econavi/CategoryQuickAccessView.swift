@@ -60,13 +60,22 @@ struct CategoryQuickAccessView: View {
         }
     }
 
-    /// STEP 9: MKLocalPointsOfInterestRequest — search area is defined by center + radius (region is read-only).
+    /// STEP 9: MKLocalPointsOfInterestRequest; EV Charging uses same fallback as Add Stop (avoids MKErrorDomain 4).
     private func runCategorySearch(_ category: MKPointOfInterestCategory) {
         guard let loc = userLocation else { return }
         isSearching = true
         categoryResults = []
-        let center = loc.coordinate
-        let request = MKLocalPointsOfInterestRequest(center: center, radius: 5000)
+
+        if category == .evCharger {
+            Task { @MainActor in
+                let items = await EVChargingSearchHelper.searchEVCharging(center: loc.coordinate)
+                isSearching = false
+                categoryResults = items
+            }
+            return
+        }
+
+        let request = MKLocalPointsOfInterestRequest(center: loc.coordinate, radius: 5000)
         request.pointOfInterestFilter = MKPointOfInterestFilter(including: [category])
         let search = MKLocalSearch(request: request)
         search.start { response, _ in
