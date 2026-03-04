@@ -1,0 +1,483 @@
+import SwiftUI
+import MapKit
+import CoreLocation
+
+// MARK: - ContentView
+struct ContentView: View {
+
+    @StateObject private var locationManager = LocationManager()
+    @StateObject private var searchManager = SearchManager()
+    @StateObject private var safetyManager = SafetyManager()
+    @StateObject private var routeService = RouteService() // Shared route service
+    @StateObject private var navigationManager = NavigationManager() // Shared navigation manager
+
+    @State private var origin = "Current Location"
+    @State private var destination = ""
+    @State private var showRoutes = false
+    @State private var selectedMode: String?
+    @State private var optimizationPrefs = RoutePreferences()
+    @State private var showSheet = false
+    @State private var showSuggestions = false
+    @State private var isInteractingWithSheet = false
+    @State private var showSafetyView = false
+    @State private var showProfileView = false
+
+    // Directions / navigation flow
+    @State private var activeDestinationName: String = ""
+    @State private var activeDestinationCoordinate: CLLocationCoordinate2D?
+    @State private var showDirectionsSheet = false
+
+    @State private var region = MKCoordinateRegion(
+        center: CLLocationCoordinate2D(latitude: 12.9716, longitude: 77.5946),
+        span: MKCoordinateSpan(latitudeDelta: 0.15, longitudeDelta: 0.15)
+    )
+
+    var body: some View {
+        ZStack {
+
+            // MARK: COLOR-CODED MAP
+            ColorCodedMapView(
+                locationManager: locationManager,
+                routeService: routeService,
+                navigationManager: navigationManager,
+                onDestinationSelected: { name, coordinate in
+                    presentDirections(name: name, coordinate: coordinate)
+                }
+            )
+            .ignoresSafeArea()
+
+            // MARK: NAVIGATION OVERLAY (Apple Maps style)
+            if navigationManager.navigationModeActive {
+                NavigationModeView(
+                    navigationManager: navigationManager,
+                    routeService: routeService,
+                    locationManager: locationManager
+                )
+                .zIndex(100)
+            }
+
+            // STEP 17: Trip completion banner on arrival
+            if let summary = navigationManager.tripJustCompleted {
+                TripCompletionBanner(summary: summary) {
+                    navigationManager.tripJustCompleted = nil
+                }
+                .zIndex(101)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            // MARK: TOP SEARCH BAR + SUGGESTIONS
+            VStack(alignment: .leading, spacing: 12) {
+                // Search Bar
+                HStack(spacing: 12) {
+                    Button { showSheet = true } label: {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, height: 44)
+                            .background(.regularMaterial, in: Circle())
+                            .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+                    }
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        
+                        TextField("Search places", text: $destination)
+                            .font(.system(size: 16))
+                            .onChange(of: destination) { _, newValue in
+                                searchManager.updateQuery(newValue)
+                                if !isInteractingWithSheet && !newValue.isEmpty {
+                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                        showSuggestions = true
+                                    }
+                                } else if newValue.isEmpty {
+                                    withAnimation(.spring(response: 0.2)) {
+                                        showSuggestions = false
+                                    }
+                                }
+                            }
+                        
+                        if !destination.isEmpty {
+                            Button {
+                                destination = ""
+                                withAnimation(.spring(response: 0.2)) {
+                                    showSuggestions = false
+                                }
+                                searchManager.clear()
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 2)
+
+                    Button {
+                        showProfileView = true
+                    } label: {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, height: 44)
+                            .background(.regularMaterial, in: Circle())
+                            .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+
+                // STEP 14–15: Suggestions dropdown (subscribe to SearchManager.suggestions, Apple Maps style)
+                if showSuggestions && !searchManager.suggestions.isEmpty && !isInteractingWithSheet && !navigationManager.navigationModeActive {
+                    SearchSuggestionsDropdown(
+                        suggestions: searchManager.suggestions,
+                        isResolving: searchManager.isResolving,
+                        onSelect: { completion in
+                            Task {
+                                if let res = await searchManager.resolve(completion: completion) {
+                                    await MainActor.run {
+                                        withAnimation(.spring(response: 0.3)) {
+                                            destination = res.name
+                                            showSuggestions = false
+                                            isInteractingWithSheet = false
+                                        }
+                                        searchManager.clear()
+                                        presentDirections(name: res.name, coordinate: res.coordinate)
+                                    }
+                                }
+                            }
+                        }
+                    )
+                    .padding(.horizontal, 16)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+                
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            
+            // MARK: SOS BUTTON AT BOTTOM
+            // Only show SOS button when not navigating (navigation overlay has its own controls)
+            if !navigationManager.navigationModeActive {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button {
+                            showSafetyView = true
+                        } label: {
+                            Image(systemName: "shield.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 60, height: 60)
+                                .background(.red, in: Circle())
+                                .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                        }
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 90) // Slightly higher than recenter button
+                    }
+                }
+                .zIndex(50) // Below navigation overlay but above map
+            }
+        }
+
+        // MARK: SAFETY VIEW
+        .sheet(isPresented: $showSafetyView) {
+            SafetyView(
+                safetyManager: safetyManager,
+                locationManager: locationManager,
+                isPresented: $showSafetyView
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
+        }
+        
+        // MARK: PROFILE VIEW (FULL SCREEN)
+        .fullScreenCover(isPresented: $showProfileView) {
+            ProfileView(isPresented: $showProfileView)
+        }
+        
+        // MARK: BOTTOM SHEET (Sidebar)
+        .sheet(isPresented: $showSheet) {
+            SidebarView(
+                origin: $origin,
+                destination: $destination,
+                showRoutes: $showRoutes,
+                selectedMode: $selectedMode,
+                optimizationPrefs: $optimizationPrefs,
+                locationManager: locationManager,
+                routeService: routeService,
+                onClose: { 
+                    showSheet = false
+                    isInteractingWithSheet = false
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
+            .presentationBackground(.clear)
+            .onAppear {
+                isInteractingWithSheet = true
+                withAnimation(.spring(response: 0.2)) {
+                    showSuggestions = false
+                }
+            }
+            .onDisappear {
+                isInteractingWithSheet = false
+            }
+        }
+
+        // MARK: DIRECTIONS SHEET (after destination selection)
+        .sheet(isPresented: $showDirectionsSheet) {
+            if let coord = activeDestinationCoordinate {
+                DirectionsSheetView(
+                    destinationName: activeDestinationName,
+                    destinationCoordinate: coord,
+                    locationManager: locationManager,
+                    navigationManager: navigationManager,
+                    routeService: routeService,
+                    isPresented: $showDirectionsSheet
+                )
+                .presentationDetents([.height(320), .large])
+                .presentationDragIndicator(.visible)
+            }
+        }
+
+        .onAppear {
+            locationManager.requestPermission()
+            locationManager.getCurrentLocation()
+            searchManager.updateRegion(region)
+        }
+        .onChange(of: locationManager.location) {
+            if let loc = locationManager.location {
+                region.center = loc.coordinate
+                searchManager.updateRegion(region)
+            }
+        }
+        .onChange(of: navigationManager.navigationModeActive) { active in
+            if active {
+                withAnimation(.easeOut(duration: 0.2)) { showSuggestions = false }
+            }
+        }
+    }
+
+    private func presentDirections(name: String, coordinate: CLLocationCoordinate2D) {
+        activeDestinationName = name
+        activeDestinationCoordinate = coordinate
+        showDirectionsSheet = true
+    }
+}
+
+// MARK: - Search suggestions dropdown (STEP 15 – Apple Maps style)
+private struct SearchSuggestionsDropdown: View {
+    let suggestions: [MKLocalSearchCompletion]
+    let isResolving: Bool
+    let onSelect: (MKLocalSearchCompletion) -> Void
+
+    private let maxVisibleRows = 6
+    private let rowHeight: CGFloat = 56
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if isResolving {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(0.9)
+                    Text("Finding…")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+            }
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(suggestions.prefix(maxVisibleRows * 2).enumerated()), id: \.offset) { index, completion in
+                        Button {
+                            onSelect(completion)
+                        } label: {
+                            HStack(spacing: 14) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.blue.opacity(0.1))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: imageName(for: completion))
+                                        .font(.system(size: 18, weight: .medium))
+                                        .foregroundStyle(Color.blue)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(completion.title)
+                                        .font(.system(size: 16, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                    if !completion.subtitle.isEmpty {
+                                        Text(completion.subtitle)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isResolving)
+
+                        if index < min(suggestions.count, maxVisibleRows * 2) - 1 {
+                            Divider()
+                                .padding(.leading, 70)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: min(400, CGFloat(min(suggestions.count, maxVisibleRows * 2)) * rowHeight))
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 8)
+    }
+
+    private func imageName(for completion: MKLocalSearchCompletion) -> String {
+        if completion.subtitle.contains("Airport") || completion.subtitle.contains("Station") {
+            return "airplane"
+        }
+        if completion.title.contains("Restaurant") || completion.title.contains("Cafe") || completion.title.contains("Coffee") {
+            return "fork.knife"
+        }
+        return "mappin.circle.fill"
+    }
+}
+
+// MARK: - STEP 17: Trip completion banner
+private struct TripCompletionBanner: View {
+    let summary: TripCompletionSummary
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.green)
+                Text("You arrived")
+                    .font(.headline.weight(.semibold))
+            }
+            HStack(spacing: 24) {
+                VStack(spacing: 2) {
+                    Text(String(format: "%.2f km", summary.distanceKm))
+                        .font(.subheadline.weight(.semibold))
+                    Text("Distance")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(spacing: 2) {
+                    Text(EmissionsCalculatorIndia.formatEmissions(summary.carbonGrams))
+                        .font(.subheadline.weight(.semibold))
+                    Text("Carbon")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Button("Done") {
+                onDismiss()
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color.green, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .padding(20)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.2), radius: 16, y: 8)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 120)
+    }
+}
+
+struct SidebarView: View {
+
+    @Binding var origin: String
+    @Binding var destination: String
+    @Binding var showRoutes: Bool
+    @Binding var selectedMode: String?
+    @Binding var optimizationPrefs: RoutePreferences
+    @ObservedObject var locationManager: LocationManager
+    @ObservedObject var routeService: RouteService
+    var onClose: (() -> Void)?
+
+    @State private var selectedTab: SidebarTab = .planner
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 28)
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+
+            VStack(spacing: 12) {
+
+                Capsule()
+                    .fill(Color.white.opacity(0.4))
+                    .frame(width: 40, height: 5)
+
+                Picker("", selection: $selectedTab) {
+                    Text("Planner").tag(SidebarTab.planner)
+                    Text("Track").tag(SidebarTab.track)
+                    Text("Rewards").tag(SidebarTab.rewards)
+                }
+                .pickerStyle(.segmented)
+                .padding()
+
+                TabView(selection: $selectedTab) {
+                    DailyTravelPlannerView().tag(SidebarTab.planner)
+                    TrackTabView().tag(SidebarTab.track)
+                    RewardsTabView().tag(SidebarTab.rewards)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+            }
+        }
+    }
+}
+struct RouteComparisonSheet: View {
+    @Binding var selectedMode: String?
+    let optimizationPrefs: RoutePreferences
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Compare Routes")
+                .font(.headline)
+
+            HStack {
+                route("Walk", "figure.walk", "walk")
+                route("Two Wheeler", "scooter", "bike")
+                route("Car", "car.fill", "car")
+            }
+        }
+        .padding()
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func route(_ title: String, _ icon: String, _ value: String) -> some View {
+        Button {
+            selectedMode = value
+        } label: {
+            VStack {
+                Image(systemName: icon)
+                Text(title)
+                    .font(.caption)
+            }
+            .padding()
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        }
+    }
+}
