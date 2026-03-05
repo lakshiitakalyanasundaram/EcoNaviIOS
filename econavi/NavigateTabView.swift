@@ -260,7 +260,7 @@ struct CompareRoutesCard: View {
             
             HStack(spacing: 12) {
                 routeOption("Walk", "figure.walk", "walk", .walking)
-                routeOption("Bike", "bicycle", "bike", .walking)
+                routeOption("Two Wheeler", "scooter", "bike", .automobile)
                 routeOption("Car", "car.fill", "car", .automobile)
                 routeOption("Transit", "bus.fill", "transit", .transit)
             }

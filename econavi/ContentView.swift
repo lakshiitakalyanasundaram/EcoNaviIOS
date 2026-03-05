@@ -416,7 +416,7 @@ struct SidebarView: View {
     @ObservedObject var routeService: RouteService
     var onClose: (() -> Void)?
 
-    @State private var selectedTab: SidebarTab = .navigate
+    @State private var selectedTab: SidebarTab = .planner
 
     var body: some View {
         ZStack {
@@ -431,8 +431,7 @@ struct SidebarView: View {
                     .frame(width: 40, height: 5)
 
                 Picker("", selection: $selectedTab) {
-                    Text("Navigate").tag(SidebarTab.navigate)
-                    Text("Shipment").tag(SidebarTab.shipment)
+                    Text("Planner").tag(SidebarTab.planner)
                     Text("Track").tag(SidebarTab.track)
                     Text("Rewards").tag(SidebarTab.rewards)
                 }
@@ -440,18 +439,7 @@ struct SidebarView: View {
                 .padding()
 
                 TabView(selection: $selectedTab) {
-                    NavigateTabView(
-                        origin: $origin,
-                        destination: $destination,
-                        showRoutes: $showRoutes,
-                        selectedMode: $selectedMode,
-                        optimizationPrefs: $optimizationPrefs,
-                        locationManager: locationManager,
-                        routeService: routeService
-                    )
-                    .tag(SidebarTab.navigate)
-
-                    ShipmentTabView().tag(SidebarTab.shipment)
+                    DailyTravelPlannerView().tag(SidebarTab.planner)
                     TrackTabView().tag(SidebarTab.track)
                     RewardsTabView().tag(SidebarTab.rewards)
                 }
@@ -471,7 +459,7 @@ struct RouteComparisonSheet: View {
 
             HStack {
                 route("Walk", "figure.walk", "walk")
-                route("Bike", "bicycle", "bike")
+                route("Two Wheeler", "scooter", "bike")
                 route("Car", "car.fill", "car")
             }
         }
@@ -493,5 +481,3 @@ struct RouteComparisonSheet: View {
         }
     }
 }
-
-

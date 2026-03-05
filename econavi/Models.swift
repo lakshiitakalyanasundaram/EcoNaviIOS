@@ -70,7 +70,7 @@ struct PlaceSuggestion: Identifiable {
 }
 
 enum SidebarTab: CaseIterable {
-    case navigate, shipment, track, rewards
+    case planner, track, rewards
 }
 
 struct Contact: Identifiable, Codable {
@@ -206,5 +206,4 @@ struct MapConstants {
     static let buttonSize: CGFloat = 55 // Reduced size
     static let buttonSpacing: CGFloat = 10
 }
-
 

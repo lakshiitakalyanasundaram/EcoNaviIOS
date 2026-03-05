@@ -27,22 +27,24 @@ struct DirectionsSheetView: View {
                 .padding(.top, 8)
 
             // Travel modes
-            HStack(spacing: 12) {
-                ForEach([TransportMode.car, .walk, .bike]) { mode in
-                    Button {
-                        selectedMode = mode
-                        recalcRoute()
-                    } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: mode.icon)
-                            Text(mode.displayName)
-                                .font(.caption2)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach([TransportMode.car, .walk, .bike]) { mode in
+                        Button {
+                            selectedMode = mode
+                            recalcRoute()
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: mode.icon)
+                                Text(mode.displayName)
+                                    .font(.caption2)
+                            }
+                            .padding(.vertical, 8)
+                            .frame(width: 84)
+                            .background(selectedMode == mode ? mode.color.opacity(0.15) : Color(.systemBackground))
+                            .foregroundColor(selectedMode == mode ? mode.color : .primary)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
-                        .padding(8)
-                        .frame(maxWidth: .infinity)
-                        .background(selectedMode == mode ? mode.color.opacity(0.15) : Color(.systemBackground))
-                        .foregroundColor(selectedMode == mode ? mode.color : .primary)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                 }
             }
@@ -66,23 +68,40 @@ struct DirectionsSheetView: View {
 
             Spacer(minLength: 8)
 
-            Button {
-                guard let route = currentRoute else { return }
-                routeService.route = route
-                navigationManager.startNavigationSession(route: route,
-                                                        locationManager: locationManager,
-                                                        transportMode: selectedMode)
-                isPresented = false
-            } label: {
-                Text("GO")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(currentRoute == nil ? Color.gray.opacity(0.4) : Color.green)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            HStack(spacing: 10) {
+                Button {
+                    guard let route = currentRoute else { return }
+                    routeService.route = route
+                    NotificationCenter.default.post(name: .previewCurrentRoute, object: nil)
+                } label: {
+                    Text("Preview")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(currentRoute == nil ? Color.gray.opacity(0.25) : Color.blue.opacity(0.2))
+                        .foregroundColor(currentRoute == nil ? .secondary : .blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .disabled(currentRoute == nil)
+
+                Button {
+                    guard let route = currentRoute else { return }
+                    routeService.route = route
+                    navigationManager.startNavigationSession(route: route,
+                                                            locationManager: locationManager,
+                                                            transportMode: selectedMode)
+                    isPresented = false
+                } label: {
+                    Text("GO")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(currentRoute == nil ? Color.gray.opacity(0.4) : Color.green)
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .disabled(currentRoute == nil)
             }
-            .disabled(currentRoute == nil)
         }
         .padding([.horizontal, .bottom])
         .task {
@@ -123,6 +142,7 @@ struct DirectionsSheetView: View {
                     }
                 }
             }
+
             Text(destinationName)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -157,7 +177,10 @@ struct DirectionsSheetView: View {
                     self.currentRoute = nil
                     return
                 }
-                guard let route = response?.routes.first else {
+                guard
+                    let routes = response?.routes,
+                    let route = self.bestRoute(routes: routes)
+                else {
                     self.errorMessage = "No route found."
                     self.currentRoute = nil
                     return
@@ -167,5 +190,9 @@ struct DirectionsSheetView: View {
             }
         }
     }
-}
 
+    private func bestRoute(routes: [MKRoute]) -> MKRoute? {
+        guard !routes.isEmpty else { return nil }
+        return routes.first
+    }
+}

@@ -9,6 +9,8 @@ extension Notification.Name {
         Notification.Name("navigationLocationUpdated")
     static let recenterToCurrentLocation =
         Notification.Name("recenterToCurrentLocation")
+    static let previewCurrentRoute =
+        Notification.Name("previewCurrentRoute")
 }
 
 // MARK: - MAIN VIEW
@@ -41,6 +43,8 @@ struct ColorCodedMapView: View {
     @State private var showSavePlaceSheet = false
     @State private var savePlaceName = ""
     @State private var savePlaceCategory: PlaceCategory = .favorites
+    @State private var showSavePlaceError = false
+    @State private var savePlaceErrorMessage: String = ""
 
     var body: some View {
         ZStack {
@@ -241,13 +245,17 @@ struct ColorCodedMapView: View {
                         Button("Save") {
                             guard let coord = longPressCoordinate else { return }
                             Task {
-                                await userDataManager.addSavedPlace(
-                                    name: savePlaceName.isEmpty ? "Saved Place" : savePlaceName,
-                                    address: nil,
+                                await userDataManager.savePlace(
+                                    name: savePlaceName,
                                     latitude: coord.latitude,
                                     longitude: coord.longitude,
                                     category: savePlaceCategory
                                 )
+                                if let err = userDataManager.lastError, !err.isEmpty {
+                                    savePlaceErrorMessage = err
+                                    showSavePlaceError = true
+                                    return
+                                }
                             }
                             showSavePlaceSheet = false
                             longPressCoordinate = nil
@@ -255,6 +263,11 @@ struct ColorCodedMapView: View {
                         .disabled(savePlaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
+            }
+            .alert("Couldn’t Save Place", isPresented: $showSavePlaceError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(savePlaceErrorMessage)
             }
         }
     }
@@ -329,6 +342,12 @@ struct EnhancedMapView: UIViewRepresentable {
             context.coordinator,
             selector: #selector(Coordinator.followUser(_:)),
             name: .navigationLocationUpdated,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.previewRoute(_:)),
+            name: .previewCurrentRoute,
             object: nil
         )
 
@@ -546,6 +565,23 @@ struct EnhancedMapView: UIViewRepresentable {
                 )
                 mapView.setRegion(region, animated: true)
             }
+        }
+
+        @objc func previewRoute(_ note: Notification) {
+            guard let mapView = mapView else { return }
+            let polylines = mapView.overlays.compactMap { $0 as? MKPolyline }
+            guard !polylines.isEmpty else { return }
+
+            var rect = polylines[0].boundingMapRect
+            for polyline in polylines.dropFirst() {
+                rect = rect.union(polyline.boundingMapRect)
+            }
+
+            mapView.setVisibleMapRect(
+                rect,
+                edgePadding: UIEdgeInsets(top: 140, left: 40, bottom: 240, right: 40),
+                animated: true
+            )
         }
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
@@ -1129,4 +1165,3 @@ struct NavigationOverlay: View {
         .padding(.bottom, 8)
     }
 }
-

@@ -7,163 +7,150 @@
 
 import SwiftUI
 
+/// Carbon Budget rewards: 100 kg CO₂ monthly budget, dynamically computed from Supabase trip_emissions for current month.
 struct RewardsTabView: View {
     @EnvironmentObject var userDataManager: UserDataManager
 
-    private var totalCredits: Int {
-        userDataManager.rewards.reduce(0) { $0 + $1.cost }
+    private let monthlyLimitKg: Double = 100
+
+    private var monthName: String {
+        let f = DateFormatter()
+        f.dateFormat = "LLLL"
+        return f.string(from: Date())
+    }
+
+    private var totalKgThisMonth: Double {
+        userDataManager.monthlyCarbonEmissionKg
+    }
+
+    private var remainingKg: Double {
+        monthlyLimitKg - totalKgThisMonth
+    }
+
+    private var ringProgress: Double {
+        if remainingKg < 0 { return 1 }
+        return min(max(remainingKg / monthlyLimitKg, 0), 1)
+    }
+
+    private var ringColor: Color {
+        remainingKg < 0 ? .red : .green
+    }
+
+    private var lastMonthBadge: UserBadge? {
+        let cal = Calendar.current
+        guard let prev = cal.date(byAdding: .month, value: -1, to: Date()) else { return nil }
+        let m = cal.component(.month, from: prev)
+        let y = cal.component(.year, from: prev)
+        return userDataManager.userBadges.first(where: { $0.month == m && $0.year == y })
     }
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 28) {
-                headerSection
-                impactRingSection
-                rewardsListSection
-                achievementsSection
+            VStack(spacing: 20) {
+                carbonBudgetRingCard
+                if let badge = lastMonthBadge {
+                    badgeCard(badge)
+                }
+                if let err = userDataManager.lastError, !err.isEmpty {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                }
             }
             .padding(.horizontal)
             .padding(.top, 16)
             .padding(.bottom, 32)
         }
         .task {
-            await userDataManager.fetchRewards()
+            await userDataManager.fetchTripEmissionsThisMonth()
+            await userDataManager.fetchUserBadges()
+            await userDataManager.awardBadgeForPreviousMonthIfNeeded(monthlyLimitKg: monthlyLimitKg)
+        }
+        .refreshable {
+            await userDataManager.fetchTripEmissionsThisMonth()
+            await userDataManager.fetchUserBadges()
         }
     }
 
-    private var headerSection: some View {
-        HStack {
-            Text("Environmental Impact")
-                .font(.title2.weight(.semibold))
-            Spacer()
-        }
-        .padding()
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-    }
+    private var carbonBudgetRingCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Monthly Carbon Budget")
+                        .font(.headline.weight(.semibold))
+                    Text("\(monthName) • Resets on the 1st")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
 
-    private var impactRingSection: some View {
-        VStack(spacing: 20) {
-            VStack(spacing: 6) {
-                Text("Eco Credits")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("\(totalCredits)")
-                    .font(.system(size: 42, weight: .bold))
-                    .foregroundStyle(.green)
-                Text("Earned from reports, saved places & offline maps")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+            ZStack {
+                Circle()
+                    .stroke(Color.gray.opacity(0.18), lineWidth: 16)
+
+                Circle()
+                    .trim(from: 0, to: ringProgress)
+                    .stroke(
+                        ringColor,
+                        style: StrokeStyle(lineWidth: 16, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeOut(duration: 0.6), value: ringProgress)
+
+                VStack(spacing: 4) {
+                    Text(String(format: "%.0f / %.0f kg", remainingKg, monthlyLimitKg))
+                        .font(.system(size: 34, weight: .bold))
+                        .foregroundStyle(remainingKg < 0 ? .red : .primary)
+                        .minimumScaleFactor(0.6)
+                        .lineLimit(1)
+                    Text("remaining")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-            Divider()
-            HStack(spacing: 24) {
-                metric("Rewards", "\(userDataManager.rewards.count)")
-                metric("Reports", "\(userDataManager.reports.count)")
-                metric("Places", "\(userDataManager.savedPlaces.count)")
+            .frame(width: 240, height: 240)
+            .frame(maxWidth: .infinity)
+
+            HStack(spacing: 20) {
+                metric("Emitted", String(format: "%.1f kg", totalKgThisMonth))
+                metric("Trips", "\(userDataManager.tripEmissionsThisMonth.count)")
             }
         }
-        .frame(maxWidth: .infinity)
         .padding()
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 28))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     private func metric(_ title: String, _ value: String) -> some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var rewardsListSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Your Rewards")
-                .font(.headline)
-            if userDataManager.rewards.isEmpty {
-                Text("Complete reports, save places, and download maps to earn credits.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding()
-            } else {
-                ForEach(userDataManager.rewards) { reward in
-                    HStack(spacing: 16) {
-                        Image(systemName: "leaf.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(.green)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(reward.name)
-                                .font(.subheadline.weight(.semibold))
-                            if let desc = reward.description, !desc.isEmpty {
-                                Text(desc)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        Text("+\(reward.cost)")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.green)
-                    }
-                    .padding()
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                }
-            }
-        }
-        .padding()
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
-    }
-
-    private var achievementsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Achievements")
-                .font(.headline)
-            achievementCard(
-                title: "Green Commuter",
-                subtitle: "Use low-emission transport to earn more",
-                systemIcon: "shield.lefthalf.filled",
-                color: .green
-            )
-            achievementCard(
-                title: "Carbon Saver",
-                subtitle: "Save places and download maps to earn credits",
-                systemIcon: "leaf.circle.fill",
-                color: .mint
-            )
-            achievementCard(
-                title: "Reporter",
-                subtitle: "Submit reports to help improve the map",
-                systemIcon: "checkmark.shield.fill",
-                color: .blue
-            )
-        }
-        .padding()
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
-    }
-
-    private func achievementCard(
-        title: String,
-        subtitle: String,
-        systemIcon: String,
-        color: Color
-    ) -> some View {
-        HStack(spacing: 16) {
-            Image(systemName: systemIcon)
+    private func badgeCard(_ badge: UserBadge) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: "rosette")
                 .font(.title2)
-                .foregroundStyle(color)
+                .foregroundStyle(.yellow)
                 .frame(width: 44, height: 44)
                 .background(Circle().fill(.ultraThinMaterial))
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(subtitle)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Last month’s badge")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text(badge.badgeName)
+                    .font(.headline.weight(.semibold))
             }
             Spacer()
         }
         .padding()
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }

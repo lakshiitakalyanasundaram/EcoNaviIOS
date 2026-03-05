@@ -104,7 +104,6 @@ enum TransportMode: String, CaseIterable, Identifiable {
     case walk = "walk"
     case bike = "bike"
     case car = "car"
-    case publicTransport = "publicTransport"
     
     var id: String { rawValue }
     
@@ -113,11 +112,9 @@ enum TransportMode: String, CaseIterable, Identifiable {
         case .walk:
             return "Walk"
         case .bike:
-            return "Bike"
+            return "Two Wheeler"
         case .car:
             return "Car"
-        case .publicTransport:
-            return "Public Transport"
         }
     }
     
@@ -126,11 +123,9 @@ enum TransportMode: String, CaseIterable, Identifiable {
         case .walk:
             return "figure.walk"
         case .bike:
-            return "bicycle"
+            return "scooter"
         case .car:
             return "car.fill"
-        case .publicTransport:
-            return "bus.fill"
         }
     }
     
@@ -139,11 +134,9 @@ enum TransportMode: String, CaseIterable, Identifiable {
         case .walk:
             return .walking
         case .bike:
-            return .walking // MapKit doesn't have bike, use walking
+            return .automobile // Treat bike mode as motorized two-wheeler
         case .car:
             return .automobile
-        case .publicTransport:
-            return .transit
         }
     }
     
@@ -155,9 +148,6 @@ enum TransportMode: String, CaseIterable, Identifiable {
             return .green
         case .car:
             return .orange
-        case .publicTransport:
-            return .purple
         }
     }
 }
-

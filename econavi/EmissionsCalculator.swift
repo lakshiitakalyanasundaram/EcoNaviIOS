@@ -5,7 +5,7 @@ struct EmissionsCalculatorIndia {
     // 🇮🇳 Emission factors (grams CO₂ per passenger-km)
     static let emissionFactors: [String: Double] = [
         "walk": 0,
-        "bike": 0,
+        "bike": 55,         // Two-wheeler (motorbike/scooter), avg urban mix
         "bus": 82,          // Indian city buses (high occupancy)
         "train": 35,        // Indian Railways (mostly electric)
         "metro": 28,        // Urban metro systems
@@ -21,7 +21,7 @@ struct EmissionsCalculatorIndia {
     // 🇮🇳 Average speeds (km/h)
     static let averageSpeeds: [String: Double] = [
         "walk": 4.5,
-        "bike": 14,
+        "bike": 28,
         "bus": 18,
         "train": 65,
         "metro": 35,
@@ -33,7 +33,7 @@ struct EmissionsCalculatorIndia {
     // 🇮🇳 Cost factors (INR per km + base fare)
     static let costFactors: [String: (perKm: Double, baseFare: Double)] = [
         "walk": (0, 0),
-        "bike": (2.0, 0),          // Bicycle rentals
+        "bike": (3.5, 0),          // Two-wheeler fuel + maintenance
         "bus": (1.5, 15),          // City buses
         "train": (1.0, 30),        // Local + express average
         "metro": (2.0, 25),
@@ -46,6 +46,11 @@ struct EmissionsCalculatorIndia {
     static func calculateEmissions(mode: String, distanceKm: Double) -> Double {
         let factor = emissionFactors[mode] ?? 0
         return factor * distanceKm
+    }
+
+    /// Trip carbon: `carbon_emission = distance_km × emission_factor`. Reusable for completed trips (time_taken is for storage only).
+    static func carbonEmissionForTrip(distanceKm: Double, mode: String) -> Double {
+        return calculateEmissions(mode: mode, distanceKm: distanceKm)
     }
 
     // MARK: - Travel Time (minutes)
@@ -100,4 +105,3 @@ struct EmissionsCalculatorIndia {
         return String(format: "₹%.0f", amount)
     }
 }
-
