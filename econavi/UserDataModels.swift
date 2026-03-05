@@ -340,6 +340,136 @@ struct ReportInsert: Encodable {
     }
 }
 
+// MARK: - UserBadge (monthly carbon budget award)
+
+struct UserBadge: Identifiable, Codable, Hashable {
+    var id: UUID
+    var userId: UUID
+    var badgeName: String
+    var month: Int
+    var year: Int
+    var createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case badgeName = "badge_name"
+        case month
+        case year
+        case createdAt = "created_at"
+    }
+
+    init(id: UUID, userId: UUID, badgeName: String, month: Int, year: Int, createdAt: Date) {
+        self.id = id
+        self.userId = userId
+        self.badgeName = badgeName
+        self.month = month
+        self.year = year
+        self.createdAt = createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        userId = try c.decode(UUID.self, forKey: .userId)
+        badgeName = try c.decode(String.self, forKey: .badgeName)
+        month = try c.decode(Int.self, forKey: .month)
+        year = try c.decode(Int.self, forKey: .year)
+        let dateStr = try c.decode(String.self, forKey: .createdAt)
+        createdAt = parseISODate(dateStr) ?? Date()
+    }
+}
+
+struct UserBadgeInsert: Encodable {
+    var user_id: UUID
+    var badge_name: String
+    var month: Int
+    var year: Int
+
+    enum CodingKeys: String, CodingKey {
+        case user_id
+        case badge_name
+        case month
+        case year
+    }
+}
+
+// MARK: - Trip Emission (carbon tracking per completed trip)
+
+struct TripEmission: Identifiable, Codable {
+    var id: UUID
+    var userId: UUID
+    var createdAt: Date
+    var distance: Double       // km
+    var timeTaken: Double      // seconds
+    var carbonEmission: Double // grams CO₂
+    var transportMode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case createdAt = "created_at"
+        case distance
+        case timeTaken = "time_taken"
+        case carbonEmission = "carbon_emission"
+        case transportMode = "transport_mode"
+    }
+
+    init(id: UUID, userId: UUID, createdAt: Date, distance: Double, timeTaken: Double, carbonEmission: Double, transportMode: String?) {
+        self.id = id
+        self.userId = userId
+        self.createdAt = createdAt
+        self.distance = distance
+        self.timeTaken = timeTaken
+        self.carbonEmission = carbonEmission
+        self.transportMode = transportMode
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        userId = try c.decode(UUID.self, forKey: .userId)
+        let dateStr = try c.decode(String.self, forKey: .createdAt)
+        createdAt = parseISODate(dateStr) ?? Date()
+        distance = try c.decode(Double.self, forKey: .distance)
+        timeTaken = try c.decode(Double.self, forKey: .timeTaken)
+        carbonEmission = try c.decode(Double.self, forKey: .carbonEmission)
+        transportMode = try c.decodeIfPresent(String.self, forKey: .transportMode)
+    }
+}
+
+struct TripEmissionInsert: Encodable {
+    var user_id: UUID
+    var distance: Double
+    var time_taken: Double
+    var carbon_emission: Double
+    var transport_mode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case user_id
+        case distance
+        case time_taken
+        case carbon_emission
+        case transport_mode
+    }
+}
+
+// MARK: - SavedPlace legacy insert (compat with 001 schema: display_name only)
+
+struct SavedPlaceLegacyInsert: Encodable {
+    var user_id: UUID
+    var display_name: String
+    var latitude: Double
+    var longitude: Double
+
+    enum CodingKeys: String, CodingKey {
+        case user_id
+        case display_name
+        case latitude
+        case longitude
+    }
+}
+
 struct SavedPlaceInsert: Encodable {
     var user_id: UUID
     var name: String

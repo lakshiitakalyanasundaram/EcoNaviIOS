@@ -71,6 +71,7 @@ final class NavigationManager: ObservableObject {
     private var routeLegs: [MKRoute] = []
     private var lastRecalcLocation: CLLocation?
     private var tripStartLocation: CLLocation?
+    private var tripStartTime: Date?
     private let recalcThreshold: CLLocationDistance = 80 // meters
     private let stepAdvanceThreshold: CLLocationDistance = 35 // meters to advance to next step
     private let offRouteThreshold: CLLocationDistance = 50 // STEP 8
@@ -121,6 +122,7 @@ final class NavigationManager: ObservableObject {
         let loc = locationManager.location
         self.sessionLocationManager = locationManager
         self.tripStartLocation = loc
+        self.tripStartTime = Date()
         self.routeLegs = legs
         self.route = legs.first
         self.currentRoute = legs.first
@@ -274,16 +276,22 @@ final class NavigationManager: ObservableObject {
             tripDistanceM = 0
         }
         let tripDistanceKm = tripDistanceM / 1000.0
-        let tripCarbonGrams = EmissionsCalculatorIndia.calculateEmissions(mode: transportMode.rawValue, distanceKm: tripDistanceKm)
+        let tripCarbonGrams = EmissionsCalculatorIndia.carbonEmissionForTrip(distanceKm: tripDistanceKm, mode: transportMode.rawValue)
+        let timeTakenSeconds = tripStartTime.map { Date().timeIntervalSince($0) } ?? 0
 
         let modeName = transportMode.rawValue
         tripJustCompleted = TripCompletionSummary(distanceKm: tripDistanceKm, carbonGrams: tripCarbonGrams, mode: modeName)
         clearSession(clearTripBanner: false)
 
-        // STEP 11, 12: Write to Supabase rewards (STEP 13: weak self)
-        let credits = max(1, EmissionsCalculatorIndia.calculateCarbonCredits(savedEmissionsGrams: tripCarbonGrams))
-        let reason = String(format: "Trip %.2f km", tripDistanceKm)
         Task { [weak self] in
+            await UserDataManager.shared.insertTripEmission(
+                distanceKm: tripDistanceKm,
+                timeTakenSeconds: max(0, timeTakenSeconds),
+                carbonEmissionGrams: tripCarbonGrams,
+                transportMode: modeName
+            )
+            let credits = max(1, EmissionsCalculatorIndia.calculateCarbonCredits(savedEmissionsGrams: tripCarbonGrams))
+            let reason = String(format: "Trip %.2f km", tripDistanceKm)
             await UserDataManager.shared.addRewardPoints(credits, reason: reason)
         }
     }
@@ -323,6 +331,7 @@ final class NavigationManager: ObservableObject {
         userLocation = nil
         lastRecalcLocation = nil
         tripStartLocation = nil
+        tripStartTime = nil
         snappedLocation = nil
         distanceToNextManeuver = nil
         instructionTimingState = .none

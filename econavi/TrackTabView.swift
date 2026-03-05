@@ -1,114 +1,114 @@
 import SwiftUI
 
 struct TrackTabView: View {
+    @EnvironmentObject var userDataManager: UserDataManager
 
-    // MARK: - State
-    @State private var entries: [CommuteEntry] = []
-    @State private var weeklyEmissions: Double = 0
-    @State private var weeklySavings: Double = 0
-    @State private var greenScore: Double = 0.72   // 72%
+    private static var dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE"
+        return f
+    }()
+
+    // MARK: - Emission metrics (from Supabase trip_emissions)
+
+    private var totalEmissionsGrams: Double {
+        userDataManager.totalCarbonEmissionGrams
+    }
+
+    private var tripCount: Int {
+        userDataManager.tripEmissions.count
+    }
+
+    private var lastTripEmissionGrams: Double {
+        userDataManager.tripEmissions.first?.carbonEmission ?? 0
+    }
+
+    private var averageEmissionPerTripGrams: Double {
+        guard tripCount > 0 else { return 0 }
+        return totalEmissionsGrams / Double(tripCount)
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-
-                heroSection
-
-                progressRing
-
-                insightsRow
-
+                carbonImpactCard
                 recentTrips
-
                 nextActionCard
             }
             .padding()
         }
-        .onAppear(perform: loadMockData)
+        .task {
+            await userDataManager.fetchTripEmissions()
+        }
+        .refreshable {
+            await userDataManager.fetchTripEmissions()
+        }
     }
 
-    // MARK: - HERO
-    private var heroSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("This Week")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    // MARK: - Carbon impact card (Apple-style metrics)
 
+    private var carbonImpactCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Carbon Impact")
                 .font(.title2.bold())
 
-            Text("You saved **\(EmissionsCalculatorIndia.formatEmissions(weeklySavings))**")
-                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Total Emissions")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(EmissionsCalculatorIndia.formatEmissions(totalEmissionsGrams))
+                    .font(.system(size: 32, weight: .bold))
+                    .foregroundStyle(.primary)
+            }
+
+            HStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Trips")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text("\(tripCount)")
+                        .font(.subheadline.weight(.semibold))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Last Trip")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(EmissionsCalculatorIndia.formatEmissions(lastTripEmissionGrams))
+                        .font(.subheadline.weight(.semibold))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Avg / Trip")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(EmissionsCalculatorIndia.formatEmissions(averageEmissionPerTripGrams))
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+
+            // Optional sparkline (emissions trend)
+            if !userDataManager.tripEmissions.isEmpty {
+                let lastEmissions = Array(userDataManager.tripEmissions.prefix(12).map { $0.carbonEmission }.reversed())
+                let maxEmission = lastEmissions.max() ?? 1
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recent trips")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    HStack(alignment: .bottom, spacing: 4) {
+                        ForEach(Array(lastEmissions.enumerated()), id: \.offset) { _, value in
+                            let height = maxEmission > 0 ? max(4, (value / maxEmission) * 32) : 4
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.green.opacity(0.8))
+                                .frame(width: 6, height: CGFloat(height))
+                        }
+                    }
+                }
+                .padding(.top, 8)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
-    }
-
-    // MARK: - PROGRESS RING
-    private var progressRing: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .stroke(.gray.opacity(0.2), lineWidth: 14)
-
-                Circle()
-                    .trim(from: 0, to: greenScore)
-                    .stroke(
-                        AngularGradient(
-                            colors: [.green, .mint],
-                            center: .center
-                        ),
-                        style: StrokeStyle(lineWidth: 14, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-
-                VStack {
-                    Text("\(Int(greenScore * 100))%")
-                        .font(.system(size: 34, weight: .bold))
-                    Text("Low-carbon score")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: 180, height: 180)
-
-            Text("Above average compared to city commuters")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding()
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 28))
-    }
-
-    // MARK: - INSIGHTS
-    private var insightsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 16) {
-
-                insightCard(
-                    title: "Best Mode",
-                    value: "🚴 Bike",
-                    subtitle: "Most used this week",
-                    color: .green
-                )
-
-                insightCard(
-                    title: "CO₂ Avoided",
-                    value: EmissionsCalculatorIndia.formatEmissions(weeklySavings),
-                    subtitle: "vs car travel",
-                    color: .mint
-                )
-
-                insightCard(
-                    title: "Trips Logged",
-                    value: "\(entries.count)",
-                    subtitle: "this week",
-                    color: .blue
-                )
-            }
-            .padding(.horizontal)
-        }
     }
 
     // MARK: - RECENT TRIPS
@@ -117,29 +117,41 @@ struct TrackTabView: View {
             Text("Recent Trips")
                 .font(.headline)
 
-            ForEach(entries) { e in
-                HStack(spacing: 12) {
-                    Text(icon(for: e.mode))
-                        .font(.title2)
+            if userDataManager.isLoadingTripEmissions {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding()
+            } else if userDataManager.tripEmissions.isEmpty {
+                Text("Complete trips to see your carbon impact here.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+            } else {
+                ForEach(userDataManager.tripEmissions.prefix(50)) { t in
+                    HStack(spacing: 12) {
+                        Text(icon(for: t.transportMode ?? "trip"))
+                            .font(.title2)
 
-                    VStack(alignment: .leading) {
-                        Text(e.mode.capitalized)
-                            .bold()
-                        Text(e.date)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading) {
+                            Text((t.transportMode ?? "trip").capitalized)
+                                .bold()
+                            Text(Self.dateFormatter.string(from: t.createdAt))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        VStack(alignment: .trailing) {
+                            Text(EmissionsCalculatorIndia.formatEmissions(t.carbonEmission))
+                                .font(.caption.bold())
+                                .foregroundStyle(t.carbonEmission == 0 ? .green : .orange)
+                        }
                     }
-
-                    Spacer()
-
-                    VStack(alignment: .trailing) {
-                        Text(EmissionsCalculatorIndia.formatEmissions(e.emissions))
-                            .font(.caption.bold())
-                            .foregroundStyle(e.emissions == 0 ? .green : .orange)
-                    }
+                    .padding()
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
                 }
-                .padding()
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
             }
         }
         .padding()
@@ -202,19 +214,4 @@ struct TrackTabView: View {
         default: return "📍"
         }
     }
-
-    // MARK: - MOCK DATA (replace with real later)
-    private func loadMockData() {
-        entries = [
-            CommuteEntry(date: "Mon", mode: "bike", distance: 6, emissions: 0),
-            CommuteEntry(date: "Tue", mode: "bus", distance: 8, emissions: 120),
-            CommuteEntry(date: "Wed", mode: "walk", distance: 3, emissions: 0),
-            CommuteEntry(date: "Thu", mode: "metro", distance: 10, emissions: 90)
-        ]
-
-        weeklyEmissions = entries.reduce(0) { $0 + $1.emissions }
-        weeklySavings = 620   // vs car baseline
-        greenScore = 0.72
-    }
 }
-

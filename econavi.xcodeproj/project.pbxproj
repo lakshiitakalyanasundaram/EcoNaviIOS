@@ -307,11 +307,11 @@
 				CODE_SIGN_ENTITLEMENTS = econavi/econavi.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = T8UQUB23Y5;
+				DEVELOPMENT_TEAM = 25Q54H6657;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = econavi/Info.plist;
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "needs your location to provide real-time route tracking and safety features.\neconavi needs your location to provide real-time route tracking and safety features.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "econavi needs your location to provide route suggestions and track your commute.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "EmissioNavi needs your location for background tracking of your commute.\nEmissioNavi needs your location for background tracking of your commute.\nEmissioNavi needs your location for background tracking of your commute.\nEmissioNavi needs your location for background tracking of your commute.\n";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -324,7 +324,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.lakshiita.eco;
+				PRODUCT_BUNDLE_IDENTIFIER = econavi.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -344,11 +344,11 @@
 				CODE_SIGN_ENTITLEMENTS = econavi/econavi.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = T8UQUB23Y5;
+				DEVELOPMENT_TEAM = 25Q54H6657;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = econavi/Info.plist;
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "needs your location to provide real-time route tracking and safety features.\neconavi needs your location to provide real-time route tracking and safety features.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "econavi needs your location to provide route suggestions and track your commute.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "EmissioNavi needs your location for background tracking of your commute.\nEmissioNavi needs your location for background tracking of your commute.\nEmissioNavi needs your location for background tracking of your commute.\nEmissioNavi needs your location for background tracking of your commute.\n";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -361,7 +361,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.lakshiita.eco;
+				PRODUCT_BUNDLE_IDENTIFIER = econavi.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;

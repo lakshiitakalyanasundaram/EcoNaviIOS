@@ -48,6 +48,11 @@ struct EmissionsCalculatorIndia {
         return factor * distanceKm
     }
 
+    /// Trip carbon: `carbon_emission = distance_km × emission_factor`. Reusable for completed trips (time_taken is for storage only).
+    static func carbonEmissionForTrip(distanceKm: Double, mode: String) -> Double {
+        return calculateEmissions(mode: mode, distanceKm: distanceKm)
+    }
+
     // MARK: - Travel Time (minutes)
     static func calculateTravelTime(mode: String, distanceKm: Double) -> Double {
         let speed = averageSpeeds[mode] ?? 30

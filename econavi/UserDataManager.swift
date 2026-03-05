@@ -23,12 +23,18 @@ final class UserDataManager: ObservableObject {
     @Published private(set) var collections: [Collection] = []
     @Published private(set) var offlineMaps: [OfflineMap] = []
     @Published private(set) var reports: [Report] = []
+    @Published private(set) var tripEmissions: [TripEmission] = []
+    @Published private(set) var tripEmissionsThisMonth: [TripEmission] = []
+    @Published private(set) var userBadges: [UserBadge] = []
 
     @Published private(set) var isLoadingRewards = false
     @Published private(set) var isLoadingSavedPlaces = false
     @Published private(set) var isLoadingCollections = false
     @Published private(set) var isLoadingOfflineMaps = false
     @Published private(set) var isLoadingReports = false
+    @Published private(set) var isLoadingTripEmissions = false
+    @Published private(set) var isLoadingTripEmissionsThisMonth = false
+    @Published private(set) var isLoadingUserBadges = false
 
     @Published private(set) var lastError: String?
 
@@ -92,6 +98,15 @@ final class UserDataManager: ObservableObject {
 
     // MARK: - Saved places
 
+    /// Shared save entrypoint (used by map long-press and Places page).
+    /// - Ensures non-empty name (falls back to `"Saved Place"`).
+    /// - Inserts into Supabase and refreshes `savedPlaces`.
+    func savePlace(name: String, latitude: Double, longitude: Double, category: PlaceCategory) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmed.isEmpty ? "Saved Place" : trimmed
+        await addSavedPlace(name: finalName, address: nil, latitude: latitude, longitude: longitude, category: category)
+    }
+
     func fetchSavedPlaces() async {
         guard let uid = currentUserId else {
             savedPlaces = []
@@ -122,7 +137,9 @@ final class UserDataManager: ObservableObject {
             return
         }
         lastError = nil
-        let payload = SavedPlaceInsert(user_id: uid, name: name, address: address, latitude: latitude, longitude: longitude, category: category.rawValue, collection_id: collectionId)
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmed.isEmpty ? "Saved Place" : trimmed
+        let payload = SavedPlaceInsert(user_id: uid, name: finalName, address: address, latitude: latitude, longitude: longitude, category: category.rawValue, collection_id: collectionId)
         do {
             try await client
                 .from("saved_places")
@@ -131,7 +148,32 @@ final class UserDataManager: ObservableObject {
             await fetchSavedPlaces()
             await addRewardPoints(5, reason: "Saved a place")
         } catch {
-            lastError = error.localizedDescription
+            // Back-compat: if the DB still has only (display_name, latitude, longitude), retry with legacy payload.
+            let message = error.localizedDescription
+            print("SavedPlaces insert failed:", message)
+
+            // Only attempt legacy insert if this is a missing-column style error (not NOT NULL violations).
+            let looksLikeMissingColumnError =
+                message.contains("does not exist") ||
+                message.contains("42703") ||
+                message.contains("PGRST204")
+
+            if looksLikeMissingColumnError {
+                do {
+                    let legacy = SavedPlaceLegacyInsert(user_id: uid, display_name: finalName, latitude: latitude, longitude: longitude)
+                    try await client
+                        .from("saved_places")
+                        .insert(legacy)
+                        .execute()
+                    await fetchSavedPlaces()
+                    await addRewardPoints(5, reason: "Saved a place")
+                } catch {
+                    print("SavedPlaces legacy insert failed:", error.localizedDescription)
+                    lastError = error.localizedDescription
+                }
+            } else {
+                lastError = message
+            }
         }
     }
 
@@ -377,6 +419,180 @@ final class UserDataManager: ObservableObject {
         }
     }
 
+    // MARK: - Trip emissions (carbon tracking)
+
+    func fetchTripEmissions() async {
+        guard let uid = currentUserId else {
+            tripEmissions = []
+            return
+        }
+        isLoadingTripEmissions = true
+        lastError = nil
+        defer { isLoadingTripEmissions = false }
+
+        do {
+            let response: [TripEmission] = try await client
+                .from("trip_emissions")
+                .select()
+                .eq("user_id", value: uid)
+                .order("created_at", ascending: false)
+                .execute()
+                .value
+            tripEmissions = response
+        } catch {
+            lastError = error.localizedDescription
+            tripEmissions = []
+        }
+    }
+
+    func insertTripEmission(distanceKm: Double, timeTakenSeconds: Double, carbonEmissionGrams: Double, transportMode: String?) async {
+        guard let uid = currentUserId else {
+            lastError = "Not signed in"
+            return
+        }
+        lastError = nil
+        let payload = TripEmissionInsert(
+            user_id: uid,
+            distance: distanceKm,
+            time_taken: timeTakenSeconds,
+            carbon_emission: carbonEmissionGrams,
+            transport_mode: transportMode
+        )
+        do {
+            try await client
+                .from("trip_emissions")
+                .insert(payload)
+                .execute()
+            await fetchTripEmissions()
+            await fetchTripEmissionsThisMonth()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Total carbon (grams) from all trip emissions for the logged-in user (from in-memory list after fetch).
+    var totalCarbonEmissionGrams: Double {
+        tripEmissions.reduce(0) { $0 + $1.carbonEmission }
+    }
+
+    /// Total distance (km) from all trip emissions.
+    var totalTripDistanceKm: Double {
+        tripEmissions.reduce(0) { $0 + $1.distance }
+    }
+
+    // MARK: - Monthly emissions (Carbon budget)
+
+    func fetchTripEmissionsThisMonth() async {
+        guard let uid = currentUserId else {
+            tripEmissionsThisMonth = []
+            return
+        }
+        isLoadingTripEmissionsThisMonth = true
+        lastError = nil
+        defer { isLoadingTripEmissionsThisMonth = false }
+
+        let cal = Calendar.current
+        let now = Date()
+        let startOfMonth = cal.date(from: cal.dateComponents([.year, .month], from: now)) ?? now
+        let startOfNextMonth = cal.date(byAdding: .month, value: 1, to: startOfMonth) ?? now
+
+        do {
+            let response: [TripEmission] = try await client
+                .from("trip_emissions")
+                .select()
+                .eq("user_id", value: uid)
+                .gte("created_at", value: startOfMonth)
+                .lt("created_at", value: startOfNextMonth)
+                .order("created_at", ascending: false)
+                .execute()
+                .value
+            tripEmissionsThisMonth = response
+        } catch {
+            lastError = error.localizedDescription
+            tripEmissionsThisMonth = []
+        }
+    }
+
+    var monthlyCarbonEmissionKg: Double {
+        (tripEmissionsThisMonth.reduce(0) { $0 + $1.carbonEmission }) / 1000.0
+    }
+
+    // MARK: - User badges (monthly award)
+
+    func fetchUserBadges() async {
+        guard let uid = currentUserId else {
+            userBadges = []
+            return
+        }
+        isLoadingUserBadges = true
+        lastError = nil
+        defer { isLoadingUserBadges = false }
+
+        do {
+            let response: [UserBadge] = try await client
+                .from("user_badges")
+                .select()
+                .eq("user_id", value: uid)
+                .order("created_at", ascending: false)
+                .execute()
+                .value
+            userBadges = response
+        } catch {
+            lastError = error.localizedDescription
+            userBadges = []
+        }
+    }
+
+    /// Award a badge for the previous month if eligible and not already awarded.
+    func awardBadgeForPreviousMonthIfNeeded(monthlyLimitKg: Double = 100) async {
+        guard let uid = currentUserId else { return }
+        let cal = Calendar.current
+        let now = Date()
+        guard let prevMonthDate = cal.date(byAdding: .month, value: -1, to: now) else { return }
+        let prevMonth = cal.component(.month, from: prevMonthDate)
+        let prevYear = cal.component(.year, from: prevMonthDate)
+
+        // Already awarded?
+        if userBadges.contains(where: { $0.month == prevMonth && $0.year == prevYear }) {
+            return
+        }
+
+        let startPrevMonth = cal.date(from: cal.dateComponents([.year, .month], from: prevMonthDate)) ?? prevMonthDate
+        let startThisMonth = cal.date(from: cal.dateComponents([.year, .month], from: now)) ?? now
+
+        do {
+            let prevTrips: [TripEmission] = try await client
+                .from("trip_emissions")
+                .select()
+                .eq("user_id", value: uid)
+                .gte("created_at", value: startPrevMonth)
+                .lt("created_at", value: startThisMonth)
+                .execute()
+                .value
+
+            let totalKg = (prevTrips.reduce(0) { $0 + $1.carbonEmission }) / 1000.0
+            guard totalKg < monthlyLimitKg else { return }
+
+            let badgeName: String
+            switch totalKg {
+            case ..<25: badgeName = "Climate Champion"
+            case ..<50: badgeName = "Low Carbon Hero"
+            case ..<75: badgeName = "Eco Guardian"
+            default: badgeName = "Green Commuter"
+            }
+
+            let payload = UserBadgeInsert(user_id: uid, badge_name: badgeName, month: prevMonth, year: prevYear)
+            try await client
+                .from("user_badges")
+                .insert(payload)
+                .execute()
+
+            await fetchUserBadges()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     // MARK: - Refresh all (e.g. on login or pull-to-refresh)
 
     func refreshAll() async {
@@ -385,6 +601,9 @@ final class UserDataManager: ObservableObject {
         await fetchCollections()
         await fetchOfflineMaps()
         await fetchReports()
+        await fetchTripEmissions()
+        await fetchTripEmissionsThisMonth()
+        await fetchUserBadges()
     }
 
     func clearError() {

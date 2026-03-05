@@ -43,6 +43,8 @@ struct ColorCodedMapView: View {
     @State private var showSavePlaceSheet = false
     @State private var savePlaceName = ""
     @State private var savePlaceCategory: PlaceCategory = .favorites
+    @State private var showSavePlaceError = false
+    @State private var savePlaceErrorMessage: String = ""
 
     var body: some View {
         ZStack {
@@ -243,13 +245,17 @@ struct ColorCodedMapView: View {
                         Button("Save") {
                             guard let coord = longPressCoordinate else { return }
                             Task {
-                                await userDataManager.addSavedPlace(
-                                    name: savePlaceName.isEmpty ? "Saved Place" : savePlaceName,
-                                    address: nil,
+                                await userDataManager.savePlace(
+                                    name: savePlaceName,
                                     latitude: coord.latitude,
                                     longitude: coord.longitude,
                                     category: savePlaceCategory
                                 )
+                                if let err = userDataManager.lastError, !err.isEmpty {
+                                    savePlaceErrorMessage = err
+                                    showSavePlaceError = true
+                                    return
+                                }
                             }
                             showSavePlaceSheet = false
                             longPressCoordinate = nil
@@ -257,6 +263,11 @@ struct ColorCodedMapView: View {
                         .disabled(savePlaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
+            }
+            .alert("Couldn’t Save Place", isPresented: $showSavePlaceError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(savePlaceErrorMessage)
             }
         }
     }

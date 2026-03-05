@@ -1342,6 +1342,7 @@ struct PlacesView: View {
     @EnvironmentObject var userDataManager: UserDataManager
     @State private var showAddCollection = false
     @State private var newCollectionName = ""
+    @State private var showAddPlaceSheet = false
 
     private var homeAndWork: [SavedPlace] {
         userDataManager.savedPlaces.filter { $0.category == .home || $0.category == .work }
@@ -1418,6 +1419,15 @@ struct PlacesView: View {
         }
         .navigationTitle("Places")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showAddPlaceSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
+        }
         .task {
             await userDataManager.fetchSavedPlaces()
             await userDataManager.fetchCollections()
@@ -1439,6 +1449,134 @@ struct PlacesView: View {
         } message: {
             Text("Enter a name for the collection.")
         }
+        .sheet(isPresented: $showAddPlaceSheet) {
+            AddPlaceFromPlacesView(isPresented: $showAddPlaceSheet)
+                .environmentObject(userDataManager)
+        }
+    }
+}
+
+// MARK: - Add place from Places page (search + coordinate entry)
+private struct AddPlaceFromPlacesView: View {
+    @Binding var isPresented: Bool
+    @EnvironmentObject var userDataManager: UserDataManager
+
+    @StateObject private var searchManager = SearchManager()
+    @State private var query = ""
+    @State private var latitudeText = ""
+    @State private var longitudeText = ""
+    @State private var selectedCategory: PlaceCategory = .favorites
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Search") {
+                    TextField("Search places", text: $query)
+                        .onChange(of: query) { _, newValue in
+                            searchManager.updateQuery(newValue)
+                        }
+
+                    if !searchManager.suggestions.isEmpty && !query.isEmpty {
+                        ForEach(Array(searchManager.suggestions.prefix(8).enumerated()), id: \.offset) { _, completion in
+                            Button {
+                                Task {
+                                    if let resolved = await searchManager.resolve(completion: completion) {
+                                        latitudeText = String(format: "%.6f", resolved.coordinate.latitude)
+                                        longitudeText = String(format: "%.6f", resolved.coordinate.longitude)
+                                        query = resolved.name
+                                        searchManager.clear()
+                                    }
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(completion.title)
+                                    if !completion.subtitle.isEmpty {
+                                        Text(completion.subtitle)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section("Location") {
+                    TextField("Latitude", text: $latitudeText)
+                        .keyboardType(.decimalPad)
+                    TextField("Longitude", text: $longitudeText)
+                        .keyboardType(.decimalPad)
+                }
+
+                Section("Category") {
+                    Picker("Category", selection: $selectedCategory) {
+                        ForEach(PlaceCategory.allCases.filter { $0 != .collection }) { cat in
+                            Text(cat.displayName).tag(cat)
+                        }
+                    }
+                }
+
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Add Place")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        Task { await save() }
+                    } label: {
+                        if isSaving { ProgressView() } else { Text("Save") }
+                    }
+                    .disabled(isSaving)
+                }
+            }
+        }
+        .task {
+            // Region bias not available here (no map reference), but completer still returns results quickly.
+            searchManager.updateRegion(MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 12.9716, longitude: 77.5946),
+                span: MKCoordinateSpan(latitudeDelta: 0.2, longitudeDelta: 0.2)
+            ))
+        }
+    }
+
+    private func save() async {
+        errorMessage = nil
+        let name = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            errorMessage = "Please enter a name."
+            return
+        }
+        guard let lat = Double(latitudeText), let lon = Double(longitudeText) else {
+            errorMessage = "Please enter a valid latitude and longitude."
+            return
+        }
+
+        isSaving = true
+        defer { isSaving = false }
+
+        await userDataManager.savePlace(
+            name: name,
+            latitude: lat,
+            longitude: lon,
+            category: selectedCategory
+        )
+        if let err = userDataManager.lastError, !err.isEmpty {
+            errorMessage = err
+            return
+        }
+        isPresented = false
     }
 }
 
