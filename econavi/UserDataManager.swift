@@ -139,7 +139,7 @@ final class UserDataManager: ObservableObject {
         lastError = nil
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalName = trimmed.isEmpty ? "Saved Place" : trimmed
-        let payload = SavedPlaceInsert(user_id: uid, name: finalName, address: address, latitude: latitude, longitude: longitude, category: category.rawValue, collection_id: collectionId)
+        let payload = SavedPlaceInsert(user_id: uid, name: finalName, display_name: finalName, address: address, latitude: latitude, longitude: longitude, category: category.rawValue, collection_id: collectionId)
         do {
             try await client
                 .from("saved_places")

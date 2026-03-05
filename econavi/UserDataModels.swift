@@ -473,6 +473,7 @@ struct SavedPlaceLegacyInsert: Encodable {
 struct SavedPlaceInsert: Encodable {
     var user_id: UUID
     var name: String
+    var display_name: String
     var address: String?
     var latitude: Double
     var longitude: Double
@@ -482,6 +483,7 @@ struct SavedPlaceInsert: Encodable {
     enum CodingKeys: String, CodingKey {
         case user_id
         case name
+        case display_name
         case address
         case latitude
         case longitude
