@@ -10,9 +10,7 @@ import SwiftUI
 /// Carbon Budget rewards: 100 kg CO₂ monthly budget, dynamically computed from Supabase trip_emissions for current month.
 struct RewardsTabView: View {
     @EnvironmentObject var userDataManager: UserDataManager
-
-    private let monthlyLimitKg: Double = 100
-
+    @State private var showEditBudgetSheet = false
     private var monthName: String {
         let f = DateFormatter()
         f.dateFormat = "LLLL"
@@ -24,12 +22,12 @@ struct RewardsTabView: View {
     }
 
     private var remainingKg: Double {
-        monthlyLimitKg - totalKgThisMonth
+        limitKg - totalKgThisMonth
     }
 
     private var ringProgress: Double {
         if remainingKg < 0 { return 1 }
-        return min(max(remainingKg / monthlyLimitKg, 0), 1)
+        return min(max(remainingKg / limitKg, 0), 1)
     }
 
     private var ringColor: Color {
@@ -42,6 +40,10 @@ struct RewardsTabView: View {
         let m = cal.component(.month, from: prev)
         let y = cal.component(.year, from: prev)
         return userDataManager.userBadges.first(where: { $0.month == m && $0.year == y })
+    }
+
+    private var limitKg: Double {
+        max(userDataManager.monthlyBudgetKg, 1)
     }
 
     var body: some View {
@@ -66,11 +68,17 @@ struct RewardsTabView: View {
         .task {
             await userDataManager.fetchTripEmissionsThisMonth()
             await userDataManager.fetchUserBadges()
-            await userDataManager.awardBadgeForPreviousMonthIfNeeded(monthlyLimitKg: monthlyLimitKg)
+            await userDataManager.fetchCarbonBudget()
+            await userDataManager.awardBadgeForPreviousMonthIfNeeded(monthlyLimitKg: limitKg)
         }
         .refreshable {
             await userDataManager.fetchTripEmissionsThisMonth()
             await userDataManager.fetchUserBadges()
+            await userDataManager.fetchCarbonBudget()
+        }
+        .sheet(isPresented: $showEditBudgetSheet) {
+            EditBudgetSheet(isPresented: $showEditBudgetSheet)
+                .environmentObject(userDataManager)
         }
     }
 
@@ -85,6 +93,11 @@ struct RewardsTabView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button("Edit") {
+                    showEditBudgetSheet = true
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.bordered)
             }
 
             ZStack {
@@ -101,7 +114,7 @@ struct RewardsTabView: View {
                     .animation(.easeOut(duration: 0.6), value: ringProgress)
 
                 VStack(spacing: 4) {
-                    Text(String(format: "%.0f / %.0f kg", remainingKg, monthlyLimitKg))
+                    Text(String(format: "%.0f / %.0f kg", remainingKg, limitKg))
                         .font(.system(size: 34, weight: .bold))
                         .foregroundStyle(remainingKg < 0 ? .red : .primary)
                         .minimumScaleFactor(0.6)
@@ -152,5 +165,71 @@ struct RewardsTabView: View {
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+// MARK: - Edit budget sheet
+
+private struct EditBudgetSheet: View {
+    @EnvironmentObject var userDataManager: UserDataManager
+    @Binding var isPresented: Bool
+
+    @State private var budgetText: String = ""
+    @State private var isSaving = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Monthly Carbon Budget") {
+                    HStack {
+                        TextField("100", text: $budgetText)
+                            .keyboardType(.decimalPad)
+                        Text("kg")
+                    }
+                }
+                if let error {
+                    Section {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Monthly Carbon Budget")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        Task { await save() }
+                    } label: {
+                        if isSaving { ProgressView() } else { Text("Save") }
+                    }
+                    .disabled(isSaving || Double(budgetText) == nil)
+                }
+            }
+        }
+        .onAppear {
+            budgetText = String(format: "%.0f", max(userDataManager.monthlyBudgetKg, 1))
+        }
+    }
+
+    private func save() async {
+        error = nil
+        guard let value = Double(budgetText), value > 0 else {
+            error = "Please enter a positive number."
+            return
+        }
+        isSaving = true
+        defer { isSaving = false }
+        await userDataManager.upsertCarbonBudget(budgetKg: value)
+        if let err = userDataManager.lastError, !err.isEmpty {
+            error = err
+            return
+        }
+        isPresented = false
     }
 }

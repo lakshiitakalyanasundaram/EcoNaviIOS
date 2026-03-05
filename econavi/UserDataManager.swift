@@ -26,6 +26,7 @@ final class UserDataManager: ObservableObject {
     @Published private(set) var tripEmissions: [TripEmission] = []
     @Published private(set) var tripEmissionsThisMonth: [TripEmission] = []
     @Published private(set) var userBadges: [UserBadge] = []
+    @Published private(set) var monthlyBudgetKg: Double = 100
 
     @Published private(set) var isLoadingRewards = false
     @Published private(set) var isLoadingSavedPlaces = false
@@ -35,6 +36,7 @@ final class UserDataManager: ObservableObject {
     @Published private(set) var isLoadingTripEmissions = false
     @Published private(set) var isLoadingTripEmissionsThisMonth = false
     @Published private(set) var isLoadingUserBadges = false
+    @Published private(set) var isLoadingCarbonBudget = false
 
     @Published private(set) var lastError: String?
 
@@ -515,6 +517,63 @@ final class UserDataManager: ObservableObject {
 
     var monthlyCarbonEmissionKg: Double {
         (tripEmissionsThisMonth.reduce(0) { $0 + $1.carbonEmission }) / 1000.0
+    }
+
+    // MARK: - User carbon budget (custom monthly limit per user)
+
+    func fetchCarbonBudget() async {
+        guard let uid = currentUserId else {
+            monthlyBudgetKg = 100
+            return
+        }
+        isLoadingCarbonBudget = true
+        lastError = nil
+        defer { isLoadingCarbonBudget = false }
+
+        do {
+            struct BudgetRow: Decodable {
+                let monthly_budget_kg: Double
+            }
+            let response: [BudgetRow] = try await client
+                .from("user_carbon_budget")
+                .select()
+                .eq("user_id", value: uid)
+                .limit(1)
+                .execute()
+                .value
+            if let row = response.first {
+                monthlyBudgetKg = max(row.monthly_budget_kg, 1)
+            } else {
+                monthlyBudgetKg = 100
+            }
+        } catch {
+            lastError = error.localizedDescription
+            monthlyBudgetKg = 100
+        }
+    }
+
+    func upsertCarbonBudget(budgetKg: Double) async {
+        guard let uid = currentUserId else {
+            lastError = "Not signed in"
+            return
+        }
+        let sanitized = max(budgetKg, 1)
+        lastError = nil
+        struct BudgetInsert: Encodable {
+            let user_id: UUID
+            let monthly_budget_kg: Double
+        }
+        let payload = BudgetInsert(user_id: uid, monthly_budget_kg: sanitized)
+        do {
+            try await client
+                .from("user_carbon_budget")
+                .upsert(payload, onConflict: "user_id")
+                .execute()
+            monthlyBudgetKg = sanitized
+        } catch {
+            print("Carbon budget upsert failed:", error.localizedDescription)
+            lastError = error.localizedDescription
+        }
     }
 
     // MARK: - User badges (monthly award)
