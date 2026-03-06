@@ -182,13 +182,10 @@ class TravelPlannerViewModel: NSObject, ObservableObject {
             
             self.currentTrip = trip
             
-            // Predict emission
-            let emission = emissionCalculator.predictEmission(
-                distance: distanceKm,
-                speed: averageSpeedKmh,
-                congestion: trafficLevel.congestionFactor,
-                mode: selectedTransportMode,
-                departureTime: departureDateTime
+            // Predict emission (standardized rule-based model, grams CO₂)
+            let emissionG = EmissionsCalculatorIndia.calculateEmissions(
+                mode: selectedTransportMode.rawValue,
+                distanceKm: distanceKm
             )
             
             // Create travel summary
@@ -200,8 +197,9 @@ class TravelPlannerViewModel: NSObject, ObservableObject {
                 estimatedDurationMinutes: durationMinutes,
                 estimatedArrivalTime: finalArrivalTime,
                 trafficLevel: trafficLevel,
-                predictedEmissionKg: emission,
-                exceedsLimit: emission > 2.0,
+                // TravelSummary stores kg; convert from standardized grams.
+                predictedEmissionKg: emissionG / 1000.0,
+                exceedsLimit: emissionG > 2000.0,
                 routeName: routeName
             )
             
@@ -211,7 +209,7 @@ class TravelPlannerViewModel: NSObject, ObservableObject {
             if summary.exceedsLimit {
                 let alternatives = await emissionCalculator.suggestAlternatives(
                     originalTrip: trip,
-                    originalEmission: emission
+                    originalEmission: emissionG
                 )
                 self.alternativeOptions = Array(alternatives.prefix(3))
             }

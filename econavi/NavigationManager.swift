@@ -276,7 +276,8 @@ final class NavigationManager: ObservableObject {
             tripDistanceM = 0
         }
         let tripDistanceKm = tripDistanceM / 1000.0
-        let tripCarbonGrams = EmissionsCalculatorIndia.carbonEmissionForTrip(distanceKm: tripDistanceKm, mode: transportMode.rawValue)
+        let emissionModeKey = transportMode == .bike ? "two_wheeler" : transportMode.rawValue
+        let tripCarbonGrams = EmissionsCalculatorIndia.carbonEmissionForTrip(distanceKm: tripDistanceKm, mode: emissionModeKey)
         let timeTakenSeconds = tripStartTime.map { Date().timeIntervalSince($0) } ?? 0
 
         let modeName = transportMode.rawValue
@@ -468,7 +469,8 @@ final class NavigationManager: ObservableObject {
 
     private func updateEmissions() {
         let distanceKm = remainingDistance / 1000.0
-        let emissions = EmissionsCalculatorIndia.calculateEmissions(mode: transportMode.rawValue,
+        let emissionModeKey = transportMode == .bike ? "two_wheeler" : transportMode.rawValue
+        let emissions = EmissionsCalculatorIndia.calculateEmissions(mode: emissionModeKey,
                                                                     distanceKm: distanceKm)
         emissionEstimate = emissions
     }

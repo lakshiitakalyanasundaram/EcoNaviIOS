@@ -2,20 +2,21 @@ import Foundation
 
 struct EmissionsCalculatorIndia {
 
-    // 🇮🇳 Emission factors (grams CO₂ per passenger-km)
+    // 🇮🇳 Emission factors (grams CO₂ per passenger-km; freight keys are grams CO₂ per ton-km)
     static let emissionFactors: [String: Double] = [
-        "walk": 0,
-        "bike": 55,         // Two-wheeler (motorbike/scooter), avg urban mix
-        "bus": 82,          // Indian city buses (high occupancy)
-        "train": 35,        // Indian Railways (mostly electric)
-        "metro": 28,        // Urban metro systems
-        "car": 210,         // Petrol/diesel mix, congestion
-        "rideshare": 210,
-        "auto": 120,        // Auto-rickshaw
-        "freightTruck": 70,
-        "freightRail": 18,
-        "freightShip": 9,
-        "freightAir": 540
+        "walk":        0.0,    // g CO₂ per passenger-km
+        "bike":        0.0,    // bicycle, zero direct emissions
+        "two_wheeler": 55.0,   // petrol two-wheeler (BEE)
+        "auto":        90.0,   // CNG auto-rickshaw (BEE)
+        "bus":         82.0,   // city bus per passenger (MoEFCC)
+        "metro":       28.0,   // metro rail per passenger (BEE)
+        "train":       35.0,   // Indian Railways avg (MoEFCC)
+        "car":         170.0,  // avg petrol car India (MoEFCC/BEE)
+        "rideshare":   170.0,  // same as car
+        "freightTruck":70.0,   // g CO₂ per ton-km
+        "freightRail": 18.0,
+        "freightShip": 9.0,
+        "freightAir":  540.0
     ]
 
     // 🇮🇳 Average speeds (km/h)
@@ -94,11 +95,17 @@ struct EmissionsCalculatorIndia {
     }
 
     // MARK: - Formatter
-    static func formatEmissions(_ gramsCO2: Double) -> String {
-        if gramsCO2 >= 1000 {
-            return String(format: "%.2f kg CO₂", gramsCO2 / 1000)
+    static func formatEmission(_ grams: Double) -> String {
+        if grams < 1000 {
+            return String(format: "%.0f g CO₂", grams)
+        } else {
+            return String(format: "%.1f kg CO₂", grams / 1000)
         }
-        return String(format: "%.0f g CO₂", gramsCO2)
+    }
+
+    // Back-compat: keep old name but standardize formatting in one place.
+    static func formatEmissions(_ gramsCO2: Double) -> String {
+        formatEmission(gramsCO2)
     }
 
     static func formatCostINR(_ amount: Double) -> String {

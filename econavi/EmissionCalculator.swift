@@ -6,18 +6,17 @@
 //
 
 import Foundation
-import MapKit
 
 class EmissionCalculator {
     
     static let shared = EmissionCalculator()
     
-    private let emissionPredictor = EmissionPredictor.shared
-    private let dailyUrbanCarbonLimit: Double = 2.0 // kg CO2
+    private let dailyUrbanCarbonLimitGrams: Double = 2000.0 // 2.0 kg CO₂, stored as grams for standardization
     
     // MARK: - Prediction
     
-    /// Predict emissions for a trip using the ML model
+    /// Predict emissions for a trip using the standardized rule-based model (grams CO₂).
+    /// Signature kept for compatibility; `speed`, `congestion`, and `departureTime` are currently unused.
     func predictEmission(
         distance: Double,
         speed: Double,
@@ -25,17 +24,7 @@ class EmissionCalculator {
         mode: TravelMode,
         departureTime: Date
     ) -> Double {
-        let hour = Calendar.current.component(.hour, from: departureTime)
-        let weekday = Calendar.current.component(.weekday, from: departureTime)
-        
-        return emissionPredictor.predictEmission(
-            distance: distance,
-            speed: speed,
-            congestion: congestion,
-            mode: mode.rawValue,
-            hour: hour,
-            day: weekday
-        )
+        EmissionsCalculatorIndia.calculateEmissions(mode: mode.rawValue, distanceKm: distance)
     }
     
     // MARK: - Traffic Level Detection
@@ -80,13 +69,10 @@ class EmissionCalculator {
         for mode in modesToTest {
             guard mode != originalTrip.transportMode else { continue }
             
-            // Predict emission for this mode (assume similar distance/time)
-            let emission = predictEmission(
-                distance: originalTrip.distanceKm,
-                speed: estimatedSpeedForMode(mode),
-                congestion: originalTrip.congestionFactor,
-                mode: mode,
-                departureTime: originalTrip.departureDateTime
+            // Predict emission for this mode (grams CO₂; assume same distance)
+            let emissionG = EmissionsCalculatorIndia.calculateEmissions(
+                mode: mode.rawValue,
+                distanceKm: originalTrip.distanceKm
             )
             
             let estimatedDuration = estimatedDurationForMode(mode, distance: originalTrip.distanceKm)
@@ -97,26 +83,24 @@ class EmissionCalculator {
                 departureTime: originalTrip.departureDateTime,
                 estimatedDurationMinutes: estimatedDuration,
                 estimatedArrivalTime: arrivalTime,
-                predictedEmissionKg: emission,
-                emissionSavingsKg: max(0, originalEmission - emission)
+                // AlternativeTravelOption stores kg; convert from standardized grams.
+                predictedEmissionKg: emissionG / 1000.0,
+                emissionSavingsKg: max(0, originalEmission - emissionG) / 1000.0
             )
             
             alternatives.append(alternative)
         }
         
         // Test different departure times if original emission is high
-        if originalEmission > dailyUrbanCarbonLimit {
+        if originalEmission > dailyUrbanCarbonLimitGrams {
             let timeOffsets = [-30, -15, 15, 30] // minutes
             
             for offset in timeOffsets {
                 let alternativeTime = originalTrip.departureDateTime.addingTimeInterval(TimeInterval(offset * 60))
                 
-                let emission = predictEmission(
-                    distance: originalTrip.distanceKm,
-                    speed: estimatedSpeedForMode(originalTrip.transportMode),
-                    congestion: originalTrip.congestionFactor,
-                    mode: originalTrip.transportMode,
-                    departureTime: alternativeTime
+                let emissionG = EmissionsCalculatorIndia.calculateEmissions(
+                    mode: originalTrip.transportMode.rawValue,
+                    distanceKm: originalTrip.distanceKm
                 )
                 
                 let estimatedDuration = originalTrip.estimatedDurationMinutes
@@ -127,18 +111,18 @@ class EmissionCalculator {
                     departureTime: alternativeTime,
                     estimatedDurationMinutes: estimatedDuration,
                     estimatedArrivalTime: arrivalTime,
-                    predictedEmissionKg: emission,
-                    emissionSavingsKg: max(0, originalEmission - emission)
+                    predictedEmissionKg: emissionG / 1000.0,
+                    emissionSavingsKg: max(0, originalEmission - emissionG) / 1000.0
                 )
                 
-                if emission < originalEmission {
+                if emissionG < originalEmission {
                     alternatives.append(alternative)
                 }
             }
         }
         
-        // Sort by emission (lowest first)
-        return alternatives.sorted { $0.predictedEmissionKg < $1.predictedEmissionKg }
+        // Sort by emission (lowest first) using standardized grams.
+        return alternatives.sorted { $0.predictedEmissionG < $1.predictedEmissionG }
     }
     
     // MARK: - Helper Methods
@@ -167,15 +151,22 @@ class EmissionCalculator {
     // MARK: - Carbon Tracking
     
     func checkExceedsLimit(_ emissionKg: Double) -> Bool {
-        return emissionKg > dailyUrbanCarbonLimit
+        // Signature kept for compatibility; parameter is interpreted as grams under the standardized system.
+        return emissionKg > dailyUrbanCarbonLimitGrams
     }
     
     func getWarningMessage(emission: Double) -> String {
-        let exceeds = emission - dailyUrbanCarbonLimit
-        return "This trip exceeds recommended Indian urban transport carbon levels by \(String(format: "%.2f", exceeds)) kg CO₂"
+        let exceedsGrams = emission - dailyUrbanCarbonLimitGrams
+        return "This trip exceeds recommended Indian urban transport carbon levels by \(EmissionsCalculatorIndia.formatEmission(max(0, exceedsGrams)))"
     }
     
     func formatEmission(_ emission: Double) -> String {
-        return String(format: "%.2f", emission) + " kg CO₂"
+        EmissionsCalculatorIndia.formatEmission(emission)
     }
+}
+
+extension AlternativeTravelOption {
+    /// Standardized grams CO₂ (derived from stored kg field to avoid model changes).
+    var predictedEmissionG: Double { predictedEmissionKg * 1000.0 }
+    var emissionSavingsG: Double { emissionSavingsKg * 1000.0 }
 }

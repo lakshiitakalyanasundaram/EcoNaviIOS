@@ -135,7 +135,7 @@ struct NavigationModeView: View {
                         Image(systemName: "leaf.fill")
                             .font(.caption)
                             .foregroundStyle(.green)
-                        Text(String(format: "%.0f g CO₂", navigationManager.emissionEstimate))
+                        Text(EmissionsCalculatorIndia.formatEmission(navigationManager.emissionEstimate))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
