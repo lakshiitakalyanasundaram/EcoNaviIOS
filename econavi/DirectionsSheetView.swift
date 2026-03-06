@@ -113,8 +113,9 @@ struct DirectionsSheetView: View {
         let distanceKm = route.distance / 1000.0
         let durationMinutes = Int(route.expectedTravelTime / 60)
         let etaDate = Date().addingTimeInterval(route.expectedTravelTime)
+        let emissionModeKey = selectedMode == .bike ? "two_wheeler" : selectedMode.rawValue
         let emissions = EmissionsCalculatorIndia.calculateEmissions(
-            mode: selectedMode.rawValue,
+            mode: emissionModeKey,
             distanceKm: distanceKm
         )
 
@@ -136,7 +137,7 @@ struct DirectionsSheetView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "leaf.fill")
                             .foregroundColor(.green)
-                        Text(String(format: "%.0f g CO₂", emissions))
+                        Text(EmissionsCalculatorIndia.formatEmission(emissions))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

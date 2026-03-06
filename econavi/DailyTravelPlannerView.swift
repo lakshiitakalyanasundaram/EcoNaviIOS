@@ -409,7 +409,7 @@ struct DailyTravelPlannerView: View {
                     Text("Predicted Carbon Emission")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text(String(format: "%.2f kg CO₂", summary.predictedEmissionKg))
+                    Text(EmissionsCalculatorIndia.formatEmission(summary.predictedEmissionKg * 1000.0))
                         .font(.title3.bold())
                 }
                 
@@ -447,7 +447,7 @@ struct DailyTravelPlannerView: View {
                     Text("Daily Limit")
                         .font(.caption)
                     Spacer()
-                    Text("2.0 kg")
+                    Text(EmissionsCalculatorIndia.formatEmission(2000.0))
                         .font(.caption.weight(.medium))
                 }
                 
@@ -455,7 +455,7 @@ struct DailyTravelPlannerView: View {
                     Text("Your Trip")
                         .font(.caption)
                     Spacer()
-                    Text(String(format: "%.2f kg", summary.predictedEmissionKg))
+                    Text(EmissionsCalculatorIndia.formatEmission(summary.predictedEmissionKg * 1000.0))
                         .font(.caption.weight(.medium))
                 }
                 
@@ -463,7 +463,7 @@ struct DailyTravelPlannerView: View {
                     Text("Exceeds by")
                         .font(.caption)
                     Spacer()
-                    Text(String(format: "%.2f kg", summary.predictedEmissionKg - summary.dailyUrbanCarbonLimit))
+                    Text(EmissionsCalculatorIndia.formatEmission(max(0, (summary.predictedEmissionKg - summary.dailyUrbanCarbonLimit) * 1000.0)))
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.red)
                 }
@@ -519,12 +519,12 @@ struct DailyTravelPlannerView: View {
                 Spacer()
                 
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(String(format: "%.2f kg", option.predictedEmissionKg))
+                    Text(EmissionsCalculatorIndia.formatEmission(option.predictedEmissionKg * 1000.0))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.green)
                     
                     if option.emissionSavingsKg > 0 {
-                        Text("-\(String(format: "%.2f", option.emissionSavingsKg)) kg")
+                        Text("-" + EmissionsCalculatorIndia.formatEmission(option.emissionSavingsKg * 1000.0))
                             .font(.caption)
                             .foregroundStyle(.green)
                     }

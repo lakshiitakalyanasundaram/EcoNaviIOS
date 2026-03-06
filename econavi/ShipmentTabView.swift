@@ -147,7 +147,7 @@ struct ShipmentTabView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text(EmissionsCalculatorIndia.formatEmissions(emissions))
+            Text(EmissionsCalculatorIndia.formatEmission(emissions))
                 .font(.system(size: 36, weight: .bold))
                 .foregroundStyle(.green)
 

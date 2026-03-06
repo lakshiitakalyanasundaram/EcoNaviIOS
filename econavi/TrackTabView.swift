@@ -56,7 +56,7 @@ struct TrackTabView: View {
                 Text("Total Emissions")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(EmissionsCalculatorIndia.formatEmissions(totalEmissionsGrams))
+                Text(EmissionsCalculatorIndia.formatEmission(totalEmissionsGrams))
                     .font(.system(size: 32, weight: .bold))
                     .foregroundStyle(.primary)
             }
@@ -73,14 +73,14 @@ struct TrackTabView: View {
                     Text("Last Trip")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Text(EmissionsCalculatorIndia.formatEmissions(lastTripEmissionGrams))
+                    Text(EmissionsCalculatorIndia.formatEmission(lastTripEmissionGrams))
                         .font(.subheadline.weight(.semibold))
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Avg / Trip")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Text(EmissionsCalculatorIndia.formatEmissions(averageEmissionPerTripGrams))
+                    Text(EmissionsCalculatorIndia.formatEmission(averageEmissionPerTripGrams))
                         .font(.subheadline.weight(.semibold))
                 }
             }
@@ -144,7 +144,7 @@ struct TrackTabView: View {
                         Spacer()
 
                         VStack(alignment: .trailing) {
-                            Text(EmissionsCalculatorIndia.formatEmissions(t.carbonEmission))
+                            Text(EmissionsCalculatorIndia.formatEmission(t.carbonEmission))
                                 .font(.caption.bold())
                                 .foregroundStyle(t.carbonEmission == 0 ? .green : .orange)
                         }
